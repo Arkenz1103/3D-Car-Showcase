@@ -3,6 +3,7 @@ import BUNDLED_PNG_URL from "@/assets/textures/bundled";
 import { COMPONENT_IDS, COMPONENT_SPECS, HOTSPOT_IDS } from "@/data/catalog";
 import { classifyMesh } from "@/lib/gltf";
 import { liftTimeline } from "@/three/liftTimeline";
+import { raceDrive } from "@/three/raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
 import { drawDashboardDisplay, makeStudioTextures } from "@/three/textures";
 import { Html } from "@react-three/drei";
@@ -18,12 +19,28 @@ import {
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   Object3D,
+  Quaternion,
   SRGBColorSpace,
   Sphere,
   SpotLight,
   Vector2,
   Vector3,
 } from "three";
+
+// ---------------------------------------------------------------------------
+// Door handling
+//
+// Several of the bundled showroom models are authored with the doors swung
+// open (the hinge node itself carries the open rotation, the panels are modelled
+// shut). Racing with the doors flapping in the wind looks broken, so every
+// `*_hinge` node discovered on the clone is damped back to its neutral
+// (identity) pose as soon as `raceDrive.active` goes true.
+//
+// Models that ship with the doors already shut — or with no door nodes at all
+// (`car-3`, the SF90's lone `Aero_Door_Latches`) — are simply a no-op: a hinge
+// that is already at identity fails the `angleTo` test and is skipped.
+// ---------------------------------------------------------------------------
+const DOOR_CLOSED = new Quaternion();
 
 /**
  * Real headlight beams.
@@ -171,7 +188,8 @@ export const VehicleModel = React.memo(
         Tg = [],
         XA = [],
         hA = [],
-        vA = [];
+        vA = [],
+        doorNodes = [];
       let HA = null,
         lg = null;
       return (
@@ -186,6 +204,9 @@ export const VehicleModel = React.memo(
             (Wg.name === "Knuckle_FL" || Wg.name === "Knuckle_FR") && vA.push(Wg),
             (Wg.name === "F1_Steering_Wheel_Group" || Wg.name === "steering_wheel") && (HA = Wg),
             Wg.name === "ShutOff_Gurney_Mobile_Flap" && (lg = Wg),
+            // Door hinges are captured BEFORE the mesh early-out: they are plain
+            // Object3D pivots, never meshes.
+            /hinge/i.test(Wg.name) && !/latch/i.test(Wg.name) && doorNodes.push(Wg),
             !Wg.isMesh)
           )
             return;
@@ -570,6 +591,7 @@ export const VehicleModel = React.memo(
           frontSteerNodes: vA,
           steeringWheelGroup: HA,
           gurneyFlapNode: lg,
+          doorNodes,
         }
       );
     }, [Q, p, X]);
@@ -733,13 +755,21 @@ export const VehicleModel = React.memo(
     useFrame((BA, MA) => {
       N.current = BA.invalidate;
       const WA = Math.min(MA, 0.05);
+      // In race mode the world transform lives on <RaceVehicleRig/>, so the
+      // turntable group stays neutral and the controls come from the engine.
+      const racing = raceDrive.active;
       let JA = !1;
       if (CA.current) {
-        // Mirror the shared lift timeline (advanced by <LiftDirector/>): the car
-        // rides the platform with identical height + yaw, frame for frame.
-        CA.current.position.y = liftTimeline.y;
-        CA.current.rotation.y = liftTimeline.yaw;
-        if (liftTimeline.atTop && !z) IA(!0);
+        if (racing) {
+          CA.current.position.y = 0;
+          CA.current.rotation.y = 0;
+        } else {
+          // Mirror the shared lift timeline (advanced by <LiftDirector/>): the car
+          // rides the platform with identical height + yaw, frame for frame.
+          CA.current.position.y = liftTimeline.y;
+          CA.current.rotation.y = liftTimeline.yaw;
+          if (liftTimeline.atTop && !z) IA(!0);
+        }
       }
       if (L.gurneyFlapNode) {
         const rA = P ? 0.931 : 0.958,
@@ -750,7 +780,7 @@ export const VehicleModel = React.memo(
             Math.abs(L.gurneyFlapNode.rotation.x - kA) > 5e-4) &&
             (JA = !0));
       }
-      const nA = MathUtils.degToRad(j);
+      const nA = racing ? MathUtils.degToRad(raceDrive.steerDeg) : MathUtils.degToRad(j);
       for (const rA of L.frontSteerNodes)
         ((rA.rotation.y = MathUtils.damp(rA.rotation.y, nA, 10, WA)),
           Math.abs(rA.rotation.y - nA) > 0.001 && (JA = !0));
@@ -762,7 +792,33 @@ export const VehicleModel = React.memo(
       for (const rA of L.wheelSpinNodes)
         (/fl|fr/i.test(rA.name) &&
           ((rA.rotation.order = "YXZ"), (rA.rotation.y = MathUtils.damp(rA.rotation.y, nA, 10, WA))),
-          y && ((rA.rotation.x -= WA * 16.5), (JA = !0)));
+          racing
+            ? (Math.abs(raceDrive.spinRate) > 0.05 && ((rA.rotation.x -= WA * raceDrive.spinRate), (JA = !0)))
+            : y && ((rA.rotation.x -= WA * 16.5), (JA = !0)));
+      // Doors shut for the race. SlERPing the hinge back to identity is the only
+      // allocation free way to animate a quaternion pivot, and hinges that are
+      // already neutral cost one `angleTo` comparison.
+      if (racing && L.doorNodes.length) {
+        const rA = 1 - Math.exp(-7 * WA);
+        for (const kA of L.doorNodes) {
+          if (kA.quaternion.angleTo(DOOR_CLOSED) < 0.002) continue;
+          kA.quaternion.slerp(DOOR_CLOSED, rA);
+          JA = true;
+        }
+      }
+      // Brake lights flare straight from the simulation — no React round trip.
+      if (racing && L.taillightEmissiveMats.length) {
+        for (const rA of L.taillightEmissiveMats)
+          rA.emissiveIntensity = raceDrive.braking
+            ? rA.name.includes("Lens")
+              ? 1.85
+              : 3.8
+            : h
+              ? rA.name.includes("Lens")
+                ? 0.65
+                : 1.45
+              : 0;
+      }
       if (JA) {
         markShadowsDirty();
         BA.invalidate();

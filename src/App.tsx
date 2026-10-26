@@ -13,7 +13,12 @@ import {
   getComponentSpec,
 } from "@/data/catalog";
 import { loadVehicleAsset } from "@/lib/gltf";
+import { RaceHud } from "@/components/RaceHud";
 import { LiftDirector } from "@/three/LiftDirector";
+import { RaceCircuit } from "@/three/RaceCircuit";
+import { RaceOpponents } from "@/three/RaceOpponents";
+import { disposeAudio, initAudio, resumeAudio } from "@/three/raceAudio";
+import { NitroPlumes, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
 import { liftTimeline } from "@/three/liftTimeline";
@@ -30,6 +35,7 @@ import {
   Compass,
   Eye,
   EyeOff,
+  Flag,
   Lightbulb,
   Maximize2,
   MousePointerClick,
@@ -94,7 +100,8 @@ export function App() {
     [Wg, yg] = React.useState(!0),
     [Mg, mg] = React.useState(!1),
     [tA, eg] = React.useState("garage"),
-    [zg, $] = React.useState(!1);
+    [zg, $] = React.useState(!1),
+    [raceMode, setRaceMode] = React.useState(!1);
   const requestSequence = React.useRef(0);
   const commitAsset = React.useCallback((asset, car) => {
     React.startTransition(() => {
@@ -256,6 +263,38 @@ export function App() {
     p("");
     liftTimeline.pauseShowcase();
   }, []);
+  // Race mode swaps the showroom for the circuit and hands the car to <RaceDirector/>.
+  const enterRace = React.useCallback(() => {
+    if (!I || o) return;
+    // The click IS the gesture browser autoplay policies want: build the whole
+    // WebAudio graph here, not lazily inside the frame loop.
+    initAudio();
+    liftTimeline.pauseShowcase();
+    P(null);
+    j(null);
+    W(false);
+    n(null);
+    mg(!1);
+    setRaceMode(!0);
+  }, [I, o]);
+  const exitRace = React.useCallback(() => {
+    // No entrance replay: the timeline stays parked where it was.
+    liftTimeline.pauseShowcase();
+    // Tear the graph down so nothing keeps running (or holding the audio
+    // device) while the showroom is on screen.
+    disposeAudio();
+    setRaceMode(!1);
+  }, []);
+  // Browsers suspend the context when the tab is backgrounded; re-arm it on the
+  // way back so the engine note returns with the race.
+  React.useEffect(() => {
+    if (!raceMode) return;
+    const onVisibility = () => {
+      if (!document.hidden) resumeAudio();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [raceMode]);
   const toggleOrbit = React.useCallback(() => {
     liftTimeline.pauseShowcase();
     if (G.interior) {
@@ -268,6 +307,9 @@ export function App() {
   }, []);
   React.useEffect(() => {
     const x = (cA) => {
+      // Race mode owns the keyboard: <RaceDirector/> reads WASD/Shift/Space and
+      // these showroom shortcuts would fight it.
+      if (raceMode) return;
       if (
         cA.repeat ||
         cA.ctrlKey ||
@@ -294,7 +336,7 @@ export function App() {
                     : cA.key === "Escape" && (P(null), G.interior && KA("hero"));
     };
     return (window.addEventListener("keydown", x), () => window.removeEventListener("keydown", x));
-  }, [KA, G.interior, replayEntrance]);
+  }, [KA, G.interior, replayEntrance, raceMode]);
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
@@ -324,33 +366,54 @@ export function App() {
         onPointerMissed={clearSelection}
       >
         <RenderCoordinator />
-        <LiftDirector entranceSeq={E} />
-        <Showroom theme={H} showAeroStreamlines={kA} highDownforceGurney={nA} rollingRoad={$A} />
-        {I && (
-          <VehicleModel
-            asset={I}
-            selectedComponent={V}
-            entranceSeq={E}
-            onSelectComponent={Eg}
-            onHoverTelemetry={j}
-            onMeshInventoryReady={K}
-            paintHex={m}
-            paintFinish={L}
-            caliperSwatch={CA}
-            wheelSwatch={QA}
-            interiorSwatch={z}
-            matteCarbon={iA}
-            headlightsOn={Tg}
-            brakeLightsOn={hA}
-            highDownforceGurney={nA}
-            rollingRoad={$A}
-            steeringAngleDeg={HA}
-            technicalView={BA}
-            powerMode={WA}
-            showHotspotPins={Wg && !zg && !G.interior}
-          />
+        {/* Circuit fixtures are mounted only while racing. Their geometry,
+            textures and instance tables are built once per session and cached,
+            so re-entering race mode is free. */}
+        {raceMode && (
+          <>
+            <RaceCircuit />
+            <RaceOpponents />
+            <RaceSunlight />
+            <RaceDirector />
+            <NitroPlumes />
+          </>
         )}
-        <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
+        {/* The rig wraps the car in BOTH modes. In the showroom it stays an
+            identity transform, so switching modes re-parents without remounting
+            the GLB, its shader programs or its textures. */}
+        {I && (
+          <RaceVehicleRig>
+            <VehicleModel
+              asset={I}
+              selectedComponent={V}
+              entranceSeq={E}
+              onSelectComponent={Eg}
+              onHoverTelemetry={j}
+              onMeshInventoryReady={K}
+              paintHex={m}
+              paintFinish={L}
+              caliperSwatch={CA}
+              wheelSwatch={QA}
+              interiorSwatch={z}
+              matteCarbon={iA}
+              headlightsOn={Tg}
+              brakeLightsOn={hA}
+              highDownforceGurney={nA}
+              rollingRoad={$A}
+              steeringAngleDeg={HA}
+              technicalView={BA}
+              powerMode={WA}
+              showHotspotPins={Wg && !zg && !G.interior && !raceMode}
+            />
+          </RaceVehicleRig>
+        )}
+        {!raceMode && (
+          <>
+            <LiftDirector entranceSeq={E} />
+            <Showroom theme={H} showAeroStreamlines={kA} highDownforceGurney={nA} rollingRoad={$A} />
+            <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
+          </>
+        )}
       </Canvas>
       <div
         className="pointer-events-none fixed inset-0 z-10"
@@ -359,6 +422,9 @@ export function App() {
           contain: "strict",
         }}
       />
+      {/* Race overlay. It reads the simulation through refs + a subscription, so
+          the 60 fps numbers never re-render React or the canvas. */}
+      {raceMode && <RaceHud onExit={exitRace} />}
       {o && !I && (
         <div className="fixed inset-0 z-50 bg-[#060709]/97 flex flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="w-48 h-[2px] bg-white/10 rounded-full overflow-hidden">
@@ -406,7 +472,7 @@ export function App() {
           </button>
         </div>
       )}
-      {!zg && (
+      {!zg && !raceMode && (
         <header className="fixed top-0 inset-x-0 z-30 px-3 sm:px-5 py-3 flex items-center justify-between gap-3 pointer-events-none">
           <div className="pointer-events-auto min-w-0 flex items-center gap-3 atelier-pill px-3.5 py-2 rounded-2xl">
             <div className="flex flex-col gap-[2px] w-1">
@@ -468,6 +534,16 @@ export function App() {
             })}
           </div>
           <div className="pointer-events-auto shrink-0 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={enterRace}
+              disabled={o || !I}
+              className="atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border-[#DC1A22]/60 text-white bg-[#DC1A22]/20 hover:bg-[#DC1A22]/35"
+              title="Enter Race Mode — Drive the Circuit [WASD · Shift Nitro · Space Handbrake]"
+            >
+              <Flag className="w-3.5 h-3.5 text-[#DC1A22]" />
+              <span className="font-mono-tech text-[10px] uppercase tracking-wider">Race</span>
+            </button>
             <button
               type="button"
               onClick={() => wg("garage")}
@@ -568,7 +644,7 @@ export function App() {
           <span className="font-mono-tech text-[10px] uppercase tracking-wider">Restore HUD [H]</span>
         </button>
       )}
-      {!zg && (
+      {!zg && !raceMode && (
         <AtelierPanel
           open={Mg}
           activeTab={tA}
@@ -618,7 +694,7 @@ export function App() {
           onResetBundledGlb={fA}
         />
       )}
-      {!zg && (
+      {!zg && !raceMode && (
         <ComponentDetailPanel
           componentId={V}
           specOverride={T}
@@ -652,7 +728,7 @@ export function App() {
           onChangePowerMode={JA}
         />
       )}
-      {!zg && (
+      {!zg && !raceMode && (
         <footer className="fixed bottom-3 inset-x-3 z-20 flex flex-col items-center gap-2 pointer-events-none">
           <LiftStatus />
           <div className="h-7 flex items-center justify-center">

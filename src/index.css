@@ -166,3 +166,84 @@ button:focus-visible {
     box-shadow: none;
   }
 }
+
+/* ---------------------------------------------------------------- race HUD */
+.race-nitro[data-active="1"] {
+  border-color: rgba(56, 189, 248, 0.65);
+  box-shadow: 0 0 18px rgba(56, 189, 248, 0.45);
+}
+.race-nitro[data-empty="1"] {
+  border-color: rgba(220, 26, 34, 0.6);
+}
+/* Bottle ran dry: locked out until it has recharged for long enough. */
+.race-nitro[data-locked="1"] {
+  border-color: rgba(220, 26, 34, 0.75);
+  box-shadow: none;
+  opacity: 0.75;
+  animation: race-nitro-lock 900ms steps(2, end) infinite;
+}
+@keyframes race-nitro-lock {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.race-wrongway {
+  border-color: rgba(220, 26, 34, 0.75);
+  color: #ffd9db;
+  background: rgba(220, 26, 34, 0.24);
+  animation: race-wrongway 620ms steps(2, end) infinite;
+}
+
+@keyframes race-count-pop {
+  0% {
+    opacity: 0;
+    transform: scale(1.85);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.82);
+  }
+}
+.race-count {
+  animation: race-count-pop 1s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+}
+
+@keyframes race-toast {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  12% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.race-toast {
+  animation: race-toast 2.4s ease-out both;
+}
+
+@keyframes race-wrongway {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .race-count,
+  .race-toast,
+  .race-wrongway {
+    animation: none;
+  }
+}
+
