@@ -168,24 +168,16 @@ button:focus-visible {
 }
 
 /* ---------------------------------------------------------------- race HUD */
-.race-nitro[data-active="1"] {
+.race-turbo[data-active="1"] {
   border-color: rgba(56, 189, 248, 0.65);
   box-shadow: 0 0 18px rgba(56, 189, 248, 0.45);
 }
-.race-nitro[data-empty="1"] {
-  border-color: rgba(220, 26, 34, 0.6);
+.race-turbo[data-empty="1"] {
+  border-color: rgba(245, 197, 24, 0.45);
 }
-/* Bottle ran dry: locked out until it has recharged for long enough. */
-.race-nitro[data-locked="1"] {
-  border-color: rgba(220, 26, 34, 0.75);
-  box-shadow: none;
-  opacity: 0.75;
-  animation: race-nitro-lock 900ms steps(2, end) infinite;
-}
-@keyframes race-nitro-lock {
-  50% {
-    opacity: 0.4;
-  }
+.race-turbo[data-charging="1"] {
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
 }
 
 .race-wrongway {

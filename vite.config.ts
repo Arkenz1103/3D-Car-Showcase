@@ -15,6 +15,9 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     allowedHosts: [".e2b.app"],
+    // Keep the embedded preview stable while racing; changes require a manual
+    // browser refresh instead of interrupting the session with HMR reloads.
+    hmr: false,
   },
   preview: {
     host: "0.0.0.0",

@@ -3,9 +3,8 @@
  * Static street circuit renderer.
  *
  * Performance strategy
- *  - Every fixture is authored ONCE into a module level cache (geometries,
- *    instance matrices, textures) and reused for the whole session, so leaving
- *    and re-entering race mode never rebuilds a buffer.
+ *  - Each selectable route is baked once into a module-level cache (geometries,
+ *    instance matrices, textures) and reused on replay, avoiding per-race rebuilds.
  *  - Repeated fixtures — barriers, street lamps, checkpoint pillars, skyline —
  *    are single `instancedMesh` draw calls sharing one geometry + material, and
  *    keep their computed bounding spheres so frustum culling still discards the
@@ -109,11 +108,13 @@ function placementAt(index: number, lateral: number, yOffset: number) {
   };
 }
 
-let CACHE: any = null;
+const CACHE = new Map<string, any>();
 
-/** Builds the circuit once per session; the result is frozen and shared. */
+/** Builds each selected route once; geometry and textures are reused on replay. */
 function circuitData() {
-  if (CACHE) return CACHE;
+  const mapId = raceSession.mapId;
+  const cached = CACHE.get(mapId);
+  if (cached) return cached;
 
   // ------------------------------------------------------------- geometries
   const roadGeometry = buildRoadSurface();
@@ -214,7 +215,7 @@ function circuitData() {
   const rainGeometry = new BufferGeometry();
   rainGeometry.setAttribute("position", new BufferAttribute(rainPositions, 3));
 
-  CACHE = {
+  const data = {
     roadGeometry,
     markingGeometry,
     railGeometry,
@@ -255,7 +256,8 @@ function circuitData() {
     lampColor: new Color("#ffe6b8").multiplyScalar(2.2),
     headColor: new Color("#fff4da").multiplyScalar(3.2),
   };
-  return CACHE;
+  CACHE.set(mapId, data);
+  return data;
 }
 
 function useInstanceMatrices(ref: any, data: Float32Array) {

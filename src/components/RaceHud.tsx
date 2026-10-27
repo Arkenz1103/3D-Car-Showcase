@@ -8,19 +8,18 @@
  * runs at display refresh rate while React only re-renders on the rare, coarse
  * events: countdown, lap, finish and pause.
  */
-import { Camera, CloudRain, Flag, Gauge, Moon, RotateCcw, Sun, Timer, Trophy, Zap } from "lucide-react";
+import { Camera, Flag, Gauge, Lightbulb, RotateCcw, Sparkles, Timer, Trophy, Zap } from "lucide-react";
 import React from "react";
-import { formatRaceTime, raceTelemetry, restartRace, pauseRace, subscribeRace } from "@/three/raceEngine";
+import { AI_COUNT, formatRaceTime, raceAi, raceDrive, raceTelemetry, restartRace, pauseRace, subscribeRace } from "@/three/raceEngine";
+import { SAMPLE_COUNT, sampleX, sampleZ } from "@/three/raceTrack";
+import { triggerCrashImpact } from "@/three/raceAudio";
 import {
   CAMERA_MODES,
-  ENVIRONMENTS,
+  RACE_MAPS,
   cycleCamera,
   raceSession,
-  setEnvironment,
   subscribeRaceSession,
 } from "@/three/raceSession";
-
-const WEATHER_ICONS = [Sun, Moon, CloudRain];
 
 const R_MAIN = 78;
 const R_RPM = 63;
@@ -66,7 +65,65 @@ function kphAngle(speedKph: number) {
   return START_ANGLE + SWEEP * ratio;
 }
 
-export function RaceHud({ onExit }: { onExit: () => void }) {
+const MINIMAP_SIZE = 144;
+const MINIMAP_PADDING = 15;
+const MINIMAP_SAMPLE_STEP = 3;
+
+function buildRaceMinimap() {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < SAMPLE_COUNT; i++) {
+    const x = sampleX(i);
+    const z = sampleZ(i);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z);
+    maxZ = Math.max(maxZ, z);
+  }
+  const worldWidth = Math.max(1, maxX - minX);
+  const worldDepth = Math.max(1, maxZ - minZ);
+  const scale = Math.min(
+    (MINIMAP_SIZE - MINIMAP_PADDING * 2) / worldWidth,
+    (MINIMAP_SIZE - MINIMAP_PADDING * 2) / worldDepth,
+  );
+  const offsetX = (MINIMAP_SIZE - worldWidth * scale) * 0.5 - minX * scale;
+  const offsetY = (MINIMAP_SIZE - worldDepth * scale) * 0.5 - minZ * scale;
+  let path = "";
+  for (let i = 0; i < SAMPLE_COUNT; i += MINIMAP_SAMPLE_STEP) {
+    const x = (offsetX + sampleX(i) * scale).toFixed(1);
+    const y = (offsetY + sampleZ(i) * scale).toFixed(1);
+    path += `${i === 0 ? "M" : "L"}${x} ${y} `;
+  }
+  path += "Z";
+  return {
+    path,
+    scale,
+    offsetX,
+    offsetY,
+    startX: offsetX + sampleX(0) * scale,
+    startY: offsetY + sampleZ(0) * scale,
+  };
+}
+
+export function RaceHud({
+  onExit,
+  lightsOn,
+  bodyGlowOn,
+  interiorLightsOn,
+  onToggleLights,
+  onToggleBodyGlow,
+  onToggleInteriorLights,
+}: {
+  onExit: () => void;
+  lightsOn: boolean;
+  bodyGlowOn: boolean;
+  interiorLightsOn: boolean;
+  onToggleLights: () => void;
+  onToggleBodyGlow: () => void;
+  onToggleInteriorLights: () => void;
+}) {
   const speedRef = React.useRef<HTMLSpanElement>(null);
   const gearRef = React.useRef<HTMLSpanElement>(null);
   const rpmRef = React.useRef<HTMLSpanElement>(null);
@@ -80,6 +137,9 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
   const nitroRef = React.useRef<HTMLDivElement>(null);
   const nitroWrapRef = React.useRef<HTMLDivElement>(null);
   const nitroLabelRef = React.useRef<HTMLSpanElement>(null);
+  const nitroPercentRef = React.useRef<HTMLSpanElement>(null);
+  const minimapPlayerRef = React.useRef<SVGGElement>(null);
+  const minimapOpponentRefs = React.useRef<SVGGElement[]>([]);
   const positionRef = React.useRef<HTMLSpanElement>(null);
   const progressRef = React.useRef<HTMLDivElement>(null);
   const topSpeedRef = React.useRef<HTMLSpanElement>(null);
@@ -92,23 +152,26 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
   const [countdown, setCountdown] = React.useState<number | null>(3);
   const [GO, setGO] = React.useState(false);
   const [toast, setToast] = React.useState<string | null>(null);
+  const [crashFlash, setCrashFlash] = React.useState(0);
   const [summary, setSummary] = React.useState<any>(null);
   const [paused, setPaused] = React.useState(false);
   const [phase, setPhase] = React.useState("countdown");
-  // Weather + camera mount live in a module singleton read by `useFrame`; this
-  // state exists purely to highlight the active chips.
+  // The camera mount lives in the race-session singleton; this state only
+  // keeps the camera button label in sync.
   const [session, setSession] = React.useState({
-    envIndex: raceSession.envIndex,
+    mapId: raceSession.mapId,
     camMode: raceSession.camMode,
   });
+  const minimap = React.useMemo(() => buildRaceMinimap(), [session.mapId]);
+  const selectedMapName = RACE_MAPS.find((map) => map.id === session.mapId)?.name || "Race Circuit";
 
   React.useEffect(
     () =>
       subscribeRaceSession((next: any) =>
         setSession((previous: any) =>
-          previous.envIndex === next.envIndex && previous.camMode === next.camMode
+          previous.mapId === next.mapId && previous.camMode === next.camMode
             ? previous
-            : { envIndex: next.envIndex, camMode: next.camMode },
+            : { mapId: next.mapId, camMode: next.camMode },
         ),
       ),
     [],
@@ -117,6 +180,7 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
   React.useEffect(() => {
     let hideGO = 0;
     let hideToast = 0;
+    let hideCrash = 0;
     const unsubscribe = subscribeRace((event: any) => {
       if (event.type === "countdown") {
         setCountdown(event.value > 0 ? event.value : null);
@@ -133,6 +197,11 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
         hideToast = window.setTimeout(() => setToast(null), 2400);
       } else if (event.type === "finish") {
         setSummary(event.summary);
+      } else if (event.type === "crash") {
+        setCrashFlash(event.strength);
+        triggerCrashImpact(event.strength);
+        window.clearTimeout(hideCrash);
+        hideCrash = window.setTimeout(() => setCrashFlash(0), 260);
       } else if (event.type === "phase") {
         setPhase(event.phase);
         setPaused(event.phase === "paused");
@@ -146,6 +215,7 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
       unsubscribe();
       window.clearTimeout(hideGO);
       window.clearTimeout(hideToast);
+      window.clearTimeout(hideCrash);
     };
   }, []);
 
@@ -175,19 +245,37 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
       if (lapTimeRef.current) lapTimeRef.current.textContent = formatRaceTime(t.lapTime);
       if (bestRef.current) bestRef.current.textContent = t.bestLap ? formatRaceTime(t.bestLap) : "--:--.---";
       if (totalRef.current) totalRef.current.textContent = formatRaceTime(t.totalTime);
-      if (nitroRef.current) nitroRef.current.style.transform = `scaleX(${t.nitro.toFixed(3)})`;
+      if (nitroRef.current) nitroRef.current.style.transform = `scaleY(${t.nitro.toFixed(3)})`;
       if (nitroWrapRef.current) {
+        nitroWrapRef.current.setAttribute("aria-valuenow", String(Math.round(t.nitro * 100)));
         nitroWrapRef.current.dataset.active = t.nitroActive ? "1" : "0";
-        nitroWrapRef.current.dataset.empty = t.nitro < 0.15 ? "1" : "0";
-        // Locked = the bottle ran dry and is still on its cooldown.
-        nitroWrapRef.current.dataset.locked = t.nitroLocked ? "1" : "0";
+        nitroWrapRef.current.dataset.empty = t.nitro < 0.01 ? "1" : "0";
+        nitroWrapRef.current.dataset.charging = !t.turboReady && !t.nitroActive ? "1" : "0";
       }
       if (nitroLabelRef.current)
-        nitroLabelRef.current.textContent = t.nitroLocked
-          ? `COOL ${Math.ceil(t.nitroCooldown)}s`
-          : t.nitroActive
-            ? "BOOST"
-            : "NITRO";
+        nitroLabelRef.current.textContent = t.nitroActive
+          ? "BOOST ACTIVE"
+          : t.turboReady
+            ? "READY · USE Q"
+            : t.nitro < 0.01
+              ? "DRIVE PRECISELY"
+              : "RECHARGING";
+      if (nitroPercentRef.current)
+        nitroPercentRef.current.textContent = `${Math.round(Math.max(0, Math.min(1, t.nitro)) * 100)}%`;
+      if (minimapPlayerRef.current) {
+        const x = minimap.offsetX + raceDrive.x * minimap.scale;
+        const y = minimap.offsetY + raceDrive.z * minimap.scale;
+        const heading = (-raceDrive.heading * 180) / Math.PI;
+        minimapPlayerRef.current.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+      }
+      for (let car = 0; car < AI_COUNT; car++) {
+        const marker = minimapOpponentRefs.current[car];
+        if (!marker) continue;
+        const x = minimap.offsetX + raceAi.x[car] * minimap.scale;
+        const y = minimap.offsetY + raceAi.z[car] * minimap.scale;
+        const heading = (-raceAi.heading[car] * 180) / Math.PI;
+        marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+      }
       if (positionRef.current) positionRef.current.textContent = ordinal(t.position);
       if (progressRef.current) progressRef.current.style.transform = `scaleY(${Math.min(1, t.progress)})`;
       if (topSpeedRef.current) topSpeedRef.current.textContent = `${Math.round(t.topSpeedKph)} km/h`;
@@ -210,9 +298,16 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
     setSummary(null);
     restartRace();
   };
-
   return (
     <div className="fixed inset-0 z-40 pointer-events-none select-none font-display">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 z-[1] pointer-events-none transition-opacity duration-100"
+        style={{
+          opacity: Math.min(0.62, crashFlash * 0.58),
+          background: "radial-gradient(ellipse at center, transparent 38%, rgba(255,25,18,0.22) 74%, rgba(255,25,18,0.85) 100%)",
+        }}
+      />
       {/* ---------------------------------------------------------- top left */}
       <div className="absolute top-3 left-3 sm:top-5 sm:left-5 atelier-panel rounded-2xl px-4 py-3 min-w-[190px]">
         <div className="flex items-center gap-2 text-[#F5C518]">
@@ -223,6 +318,9 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
         </div>
         <div ref={lapTimeRef} className="font-mono-tech text-2xl sm:text-3xl font-semibold text-white tabular-nums leading-tight">
           0:00.000
+        </div>
+        <div className="mt-0.5 truncate font-mono-tech text-[9px] uppercase tracking-[0.12em] text-zinc-400">
+          {selectedMapName}
         </div>
         <div className="mt-1 flex items-center gap-3 text-[10px] font-mono-tech text-zinc-400">
           <span className="flex items-center gap-1">
@@ -266,29 +364,48 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
         </div>
       </div>
 
-      {/* ------------------------------------------- weather + camera mount */}
-      <div className="absolute top-5 left-1/2 -translate-x-1/2 hidden sm:flex items-center gap-2 pointer-events-auto">
-        <div className="atelier-panel rounded-full p-1 flex items-center gap-1">
-          {ENVIRONMENTS.map((env: any, index: number) => {
-            const Icon = WEATHER_ICONS[index] || Sun;
-            const active = session.envIndex === index;
-            return (
-              <button
-                key={env.id}
-                type="button"
-                onClick={() => setEnvironment(index)}
-                title={`${env.label} preset (E)`}
-                aria-label={`${env.label} preset`}
-                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 font-mono-tech text-[10px] uppercase tracking-[0.18em] cursor-pointer transition-colors ${
-                  active ? "bg-[#F5C518] text-black" : "text-zinc-400 hover:text-white hover:bg-white/10"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{env.label}</span>
-              </button>
-            );
-          })}
+      {/* ------------------------------------------------------ circuit map */}
+      <div className="absolute top-[126px] right-3 sm:top-[140px] sm:right-5 w-[136px] sm:w-[160px] atelier-panel rounded-2xl p-2">
+        <div className="flex items-center justify-between gap-2 px-1 pb-1">
+          <span className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-zinc-300">Circuit</span>
+          <span className="font-mono-tech text-[8px] uppercase tracking-[0.12em] text-zinc-500">MAP</span>
         </div>
+        <svg
+          viewBox={`0 0 ${MINIMAP_SIZE} ${MINIMAP_SIZE}`}
+          role="img"
+          aria-label={`${selectedMapName} race map with your car and opponents`}
+          className="block w-full aspect-square rounded-xl bg-[#080c14]/90"
+        >
+          <path d={minimap.path} fill="none" stroke="rgba(0,0,0,0.82)" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={minimap.path} fill="none" stroke="#94A3B8" strokeOpacity="0.78" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={minimap.path} fill="none" stroke="#E2E8F0" strokeOpacity="0.7" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 3" />
+          <circle cx={minimap.startX} cy={minimap.startY} r="3.2" fill="#F5C518" stroke="#111827" strokeWidth="1.3" />
+          {Array.from({ length: AI_COUNT }, (_, car) => (
+            <g
+              key={`opponent-${car}`}
+              ref={(node) => {
+                if (node) minimapOpponentRefs.current[car] = node;
+              }}
+              transform={`translate(${minimap.startX} ${minimap.startY})`}
+            >
+              <circle r="2.5" fill={car === 0 ? "#FB923C" : "#A3E635"} stroke="#111827" strokeWidth="1" />
+            </g>
+          ))}
+          <g
+            ref={minimapPlayerRef}
+            transform={`translate(${minimap.startX} ${minimap.startY})`}
+          >
+            <path d="M 0 -6 L 4.3 4 L 0 2.2 L -4.3 4 Z" fill="#F5C518" stroke="#FFF7CC" strokeWidth="1.2" strokeLinejoin="round" />
+          </g>
+        </svg>
+        <div className="mt-1 flex items-center justify-between px-1 font-mono-tech text-[7px] uppercase tracking-[0.1em] text-zinc-500">
+          <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-[#F5C518]" />YOU</span>
+          <span className="max-w-[92px] truncate text-right">{selectedMapName}</span>
+        </div>
+      </div>
+
+      {/* ----------------------------------------------- camera mount */}
+      <div className="absolute top-3 left-1/2 z-50 -translate-x-1/2 sm:top-5 flex items-center gap-2 pointer-events-auto">
         <button
           type="button"
           onClick={cycleCamera}
@@ -302,27 +419,32 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
         </button>
       </div>
 
-      {/* ----------------------------------------------------------- nitro */}
-      <div className="absolute bottom-4 left-3 sm:bottom-6 sm:left-5 w-[190px] sm:w-[240px]">
-        <div className="flex items-center justify-between mb-1">
-          <span className="font-mono-tech text-[10px] uppercase tracking-[0.22em] text-zinc-400 flex items-center gap-1.5">
-            <Zap className="w-3 h-3 text-[#38BDF8]" />
-            <span ref={nitroLabelRef}>NITRO</span>
-          </span>
-          <span className="font-mono-tech text-[9px] uppercase tracking-[0.16em] text-zinc-500">SHIFT</span>
+      {/* ----------------------------------------------------------- turbo */}
+      <div className="absolute bottom-20 left-3 sm:bottom-24 sm:left-5 w-[82px] sm:w-[92px] atelier-panel rounded-2xl px-2.5 py-2.5 shadow-[0_8px_32px_rgba(0,0,0,0.48)] flex flex-col items-center">
+        <div className="w-full flex items-center justify-center gap-1.5">
+          <Zap className="w-3.5 h-3.5 text-[#38BDF8]" />
+          <span className="font-mono-tech text-[9px] uppercase tracking-[0.16em] text-zinc-300">TURBO</span>
+          <kbd className="rounded border border-white/15 bg-white/8 px-1 py-0.5 font-mono-tech text-[9px] text-zinc-200">Q</kbd>
         </div>
+        <span ref={nitroPercentRef} className="mt-1 font-mono-tech text-[12px] font-semibold tabular-nums text-white">100%</span>
         <div
           ref={nitroWrapRef}
+          role="meter"
+          aria-label="Turbo charge"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={100}
           data-active="0"
           data-empty="0"
-          className="race-nitro relative h-3 rounded-full overflow-hidden bg-white/8 border border-white/12"
+          className="race-turbo relative mt-1 h-[92px] w-7 rounded-full overflow-hidden bg-white/8 border border-white/12"
         >
           <div
             ref={nitroRef}
-            className="absolute inset-0 origin-left rounded-full bg-gradient-to-r from-[#1D4ED8] via-[#38BDF8] to-[#A5F3FC]"
-            style={{ transform: "scaleX(1)" }}
+            className="absolute inset-x-0 bottom-0 h-full origin-bottom rounded-full bg-gradient-to-t from-[#1D4ED8] via-[#38BDF8] to-[#A5F3FC]"
+            style={{ transform: "scaleY(1)" }}
           />
         </div>
+        <span ref={nitroLabelRef} className="mt-1.5 w-full text-center font-mono-tech text-[8px] leading-tight uppercase tracking-[0.08em] text-[#7DD3FC]">READY · USE Q</span>
       </div>
 
       {/* -------------------------------------------------------- speedometer */}
@@ -463,8 +585,51 @@ export function RaceHud({ onExit }: { onExit: () => void }) {
       </div>
 
       {phase === "racing" && (
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 atelier-pill px-4 py-1.5 rounded-full font-mono-tech text-[10px] uppercase tracking-[0.18em] text-zinc-400 hidden sm:block">
-          W / S throttle · A / D steer · SHIFT nitro · SPACE handbrake · C camera · E weather · R recover · ESC pause
+        <div className="absolute bottom-2 left-1/2 z-50 -translate-x-1/2 w-max max-w-[calc(100vw-1rem)] pointer-events-auto">
+          <div className="atelier-pill rounded-2xl p-1.5 flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-3">
+            <span className="px-1 font-mono-tech text-[9px] sm:text-[10px] uppercase tracking-[0.12em] text-zinc-400 text-center">
+              <span className="sm:hidden">W/S · A/D · SHIFT · Q · SPACE · C · ESC</span>
+              <span className="hidden sm:inline">W / S throttle · A / D steer · SHIFT drift · Q turbo · SPACE brake · C camera · ESC pause</span>
+            </span>
+            <div className="flex items-center justify-center gap-1 sm:gap-1.5">
+              <button
+                type="button"
+                onClick={onToggleLights}
+                aria-pressed={lightsOn}
+                aria-label={`Turn headlights ${lightsOn ? "off" : "on"}`}
+                title={`Headlights ${lightsOn ? "on" : "off"} · press L`}
+                className={`atelier-panel rounded-full px-2 py-1.5 flex items-center gap-1.5 font-mono-tech text-[9px] uppercase tracking-[0.1em] cursor-pointer transition-colors ${lightsOn ? "text-[#F5C518]" : "text-zinc-400 hover:text-white"}`}
+              >
+                <Lightbulb className="w-3.5 h-3.5" />
+                <span>Lights</span>
+                <kbd className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-zinc-300">L</kbd>
+              </button>
+              <button
+                type="button"
+                onClick={onToggleBodyGlow}
+                aria-pressed={bodyGlowOn}
+                aria-label={`Turn body glow ${bodyGlowOn ? "off" : "on"}`}
+                title={`Body underglow ${bodyGlowOn ? "on" : "off"} · press B`}
+                className={`atelier-panel rounded-full px-2 py-1.5 flex items-center gap-1.5 font-mono-tech text-[9px] uppercase tracking-[0.1em] cursor-pointer transition-colors ${bodyGlowOn ? "text-[#F19BFF]" : "text-zinc-400 hover:text-white"}`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Body</span>
+                <kbd className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-zinc-300">B</kbd>
+              </button>
+              <button
+                type="button"
+                onClick={onToggleInteriorLights}
+                aria-pressed={interiorLightsOn}
+                aria-label={`Turn interior lights ${interiorLightsOn ? "off" : "on"}`}
+                title={`Cabin ambience ${interiorLightsOn ? "on" : "off"} · press I`}
+                className={`atelier-panel rounded-full px-2 py-1.5 flex items-center gap-1.5 font-mono-tech text-[9px] uppercase tracking-[0.1em] cursor-pointer transition-colors ${interiorLightsOn ? "text-[#A78BFA]" : "text-zinc-400 hover:text-white"}`}
+              >
+                <Lightbulb className="w-3.5 h-3.5" />
+                <span>Cabin</span>
+                <kbd className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-zinc-300">I</kbd>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

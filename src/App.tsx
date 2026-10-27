@@ -13,12 +13,14 @@ import {
   getComponentSpec,
 } from "@/data/catalog";
 import { loadVehicleAsset } from "@/lib/gltf";
+import { ENVIRONMENTS, RACE_MAPS, lockRaceConditions, raceSession, setEnvironment, setRaceLightsEnabled } from "@/three/raceSession";
+import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
 import { disposeAudio, initAudio, resumeAudio } from "@/three/raceAudio";
-import { NitroPlumes, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
+import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
 import { liftTimeline } from "@/three/liftTimeline";
@@ -32,6 +34,7 @@ import {
   Box,
   ChevronsUp,
   CircleAlert,
+  CloudRain,
   Compass,
   DoorClosed,
   DoorOpen,
@@ -39,8 +42,10 @@ import {
   EyeOff,
   Flag,
   Lightbulb,
+  Map,
   Maximize2,
   Moon,
+  Mountain,
   MousePointerClick,
   Palette,
   Sun,
@@ -48,6 +53,7 @@ import {
   SlidersVertical,
   Sparkles,
   Upload,
+  Waves,
   Wind,
 } from "lucide-react";
 import React from "react";
@@ -108,12 +114,21 @@ export function App() {
     [tA, eg] = React.useState("garage"),
     [zg, $] = React.useState(!1),
     [raceMode, setRaceMode] = React.useState(!1),
+    [raceLightsOn, setRaceLightsOn] = React.useState(false),
+    [raceBodyGlowOn, setRaceBodyGlowOn] = React.useState(false),
+    [raceInteriorLightsOn, setRaceInteriorLightsOn] = React.useState(false),
+    [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
+    [raceSetupMap, setRaceSetupMap] = React.useState(raceSession.mapId),
+    [raceSetupEnvironment, setRaceSetupEnvironment] = React.useState(raceSession.envIndex),
     [garageGateOpen, setGarageGateOpen] = React.useState(false),
     [openingGate, setOpeningGate] = React.useState(false),
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
     [neonLightsOn, setNeonLightsOn] = React.useState(false);
   const requestSequence = React.useRef(0);
   const raceTransitionTimer = React.useRef(null);
+  const raceLightsRef = React.useRef(false);
+  const raceBodyGlowRef = React.useRef(false);
+  const raceInteriorLightsRef = React.useRef(false);
   React.useEffect(
     () => () => {
       if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
@@ -280,11 +295,59 @@ export function App() {
     p("");
     liftTimeline.pauseShowcase();
   }, []);
-  // Race mode swaps the showroom for the circuit and hands the car to <RaceDirector/>.
+  // Race first opens a setup screen; the actual circuit starts only after the
+  // player confirms a map and weather/time preset.
   const enterRace = React.useCallback(() => {
-    if (!I || o) return;
-    // The click IS the gesture browser autoplay policies want: build the whole
-    // WebAudio graph here, not lazily inside the frame loop.
+    if (!I || o || openingGate) return;
+    setRaceSetupMap(raceSession.mapId);
+    setRaceSetupEnvironment(raceSession.envIndex);
+    setRaceSetupOpen(true);
+  }, [I, o, openingGate]);
+  const toggleRaceLights = React.useCallback(() => {
+    const next = !raceLightsRef.current;
+    raceLightsRef.current = next;
+    setRaceLightsOn(next);
+    setRaceLightsEnabled(next);
+  }, []);
+  const toggleRaceBodyGlow = React.useCallback(() => {
+    const next = !raceBodyGlowRef.current;
+    raceBodyGlowRef.current = next;
+    setRaceBodyGlowOn(next);
+  }, []);
+  const toggleRaceInteriorLights = React.useCallback(() => {
+    const next = !raceInteriorLightsRef.current;
+    raceInteriorLightsRef.current = next;
+    setRaceInteriorLightsOn(next);
+  }, []);
+  React.useEffect(() => {
+    if (!raceMode) return;
+    const onKeyDown = (event) => {
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.target?.closest?.("input, textarea, select, [contenteditable=true]")) return;
+      if (event.code === "KeyL") toggleRaceLights();
+      else if (event.code === "KeyB") toggleRaceBodyGlow();
+      else if (event.code === "KeyI") toggleRaceInteriorLights();
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [raceMode, toggleRaceLights, toggleRaceBodyGlow, toggleRaceInteriorLights]);
+  const beginRace = React.useCallback(() => {
+    if (!I || o || openingGate) return;
+    selectRaceTrack(raceSetupMap);
+    setEnvironment(raceSetupEnvironment);
+    const automaticLights = raceSetupEnvironment !== 0;
+    raceLightsRef.current = automaticLights;
+    setRaceLightsOn(automaticLights);
+    setRaceLightsEnabled(automaticLights);
+    raceBodyGlowRef.current = false;
+    setRaceBodyGlowOn(false);
+    raceInteriorLightsRef.current = false;
+    setRaceInteriorLightsOn(false);
+    lockRaceConditions(true);
+    setRaceSetupOpen(false);
+    // The Start Race click is the browser gesture needed to initialize audio.
     initAudio();
     liftTimeline.pauseShowcase();
     P(null);
@@ -292,8 +355,7 @@ export function App() {
     W(false);
     n(null);
     mg(!1);
-    // Give the motorized shutter time to rise in the showroom before handing
-    // the scene to the existing circuit and driving controls.
+    // Give the motorized shutter time to rise before handing over to the circuit.
     setGarageGateOpen(true);
     setOpeningGate(true);
     raceTransitionTimer.current = window.setTimeout(() => {
@@ -301,8 +363,16 @@ export function App() {
       setOpeningGate(false);
       setRaceMode(true);
     }, 1350);
-  }, [I, o]);
+  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment]);
   const exitRace = React.useCallback(() => {
+    lockRaceConditions(false);
+    raceLightsRef.current = false;
+    setRaceLightsOn(false);
+    setRaceLightsEnabled(false);
+    raceBodyGlowRef.current = false;
+    setRaceBodyGlowOn(false);
+    raceInteriorLightsRef.current = false;
+    setRaceInteriorLightsOn(false);
     // No entrance replay: the timeline stays parked where it was.
     liftTimeline.pauseShowcase();
     // Tear the graph down so nothing keeps running (or holding the audio
@@ -350,8 +420,8 @@ export function App() {
   }, []);
   React.useEffect(() => {
     const x = (cA) => {
-      // Race mode owns the keyboard: <RaceDirector/> reads WASD/Shift/Space and
-      // these showroom shortcuts would fight it.
+      // Race mode owns the keyboard: <RaceDirector/> reads WASD, Shift, Q and
+      // Space, so showroom shortcuts would fight driving controls.
       if (raceMode) return;
       if (
         cA.repeat ||
@@ -361,6 +431,10 @@ export function App() {
         cA.target.closest?.("input, textarea, select, [contenteditable=true]")
       )
         return;
+      if (raceSetupOpen) {
+        if (cA.key === "Escape") setRaceSetupOpen(false);
+        return;
+      }
       if (!(cA.target instanceof HTMLInputElement || cA.target instanceof HTMLTextAreaElement))
         if (cA.key >= "1" && cA.key <= "7") {
           const yA = CAMERA_PRESETS[Number(cA.key) - 1];
@@ -379,7 +453,7 @@ export function App() {
                     : cA.key === "Escape" && (P(null), G.interior && KA("hero"));
     };
     return (window.addEventListener("keydown", x), () => window.removeEventListener("keydown", x));
-  }, [KA, G.interior, replayEntrance, raceMode, toggleNeonLighting, toggleGurney]);
+  }, [KA, G.interior, replayEntrance, raceMode, raceSetupOpen, toggleNeonLighting, toggleGurney]);
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
@@ -421,6 +495,7 @@ export function App() {
             <RaceSunlight />
             <RaceDirector />
             <NitroPlumes />
+            <RaceCrashSparks />
           </>
         )}
         {/* The rig wraps the car in BOTH modes. In the showroom it stays an
@@ -441,14 +516,15 @@ export function App() {
               wheelSwatch={QA}
               interiorSwatch={z}
               matteCarbon={iA}
-              headlightsOn={Tg}
+              headlightsOn={raceMode ? raceLightsOn : Tg}
               brakeLightsOn={hA}
               highDownforceGurney={nA}
               rollingRoad={$A}
               steeringAngleDeg={HA}
               technicalView={BA}
               powerMode={WA}
-              neonLightsOn={neonLightsOn}
+              bodyGlowOn={raceMode ? raceBodyGlowOn : neonLightsOn}
+              interiorLightsOn={raceMode ? raceInteriorLightsOn : neonLightsOn}
               showHotspotPins={Wg && !zg && !G.interior && !raceMode}
             />
           </RaceVehicleRig>
@@ -477,7 +553,17 @@ export function App() {
       />
       {/* Race overlay. It reads the simulation through refs + a subscription, so
           the 60 fps numbers never re-render React or the canvas. */}
-      {raceMode && <RaceHud onExit={exitRace} />}
+      {raceMode && (
+        <RaceHud
+          onExit={exitRace}
+          lightsOn={raceLightsOn}
+          bodyGlowOn={raceBodyGlowOn}
+          interiorLightsOn={raceInteriorLightsOn}
+          onToggleLights={toggleRaceLights}
+          onToggleBodyGlow={toggleRaceBodyGlow}
+          onToggleInteriorLights={toggleRaceInteriorLights}
+        />
+      )}
       {o && !I && (
         <div className="fixed inset-0 z-50 bg-[#060709]/97 flex flex-col items-center justify-center gap-4 px-6 text-center">
           <div className="w-48 h-[2px] bg-white/10 rounded-full overflow-hidden">
@@ -592,7 +678,7 @@ export function App() {
               onClick={enterRace}
               disabled={o || !I || openingGate}
               className="atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border-[#DC1A22]/60 text-white bg-[#DC1A22]/20 hover:bg-[#DC1A22]/35"
-              title="Enter Race Mode — the garage gate opens before driving controls start"
+              title="Choose a circuit and conditions before starting a race"
             >
               <Flag className="w-3.5 h-3.5 text-[#DC1A22]" />
               <span className="font-mono-tech text-[10px] uppercase tracking-wider">{openingGate ? "Opening…" : "Race"}</span>
@@ -875,6 +961,145 @@ export function App() {
             </button>
           </div>
         </footer>
+      )}
+      {raceSetupOpen && !raceMode && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-[#030407]/82 backdrop-blur-md p-3 sm:p-6 pointer-events-auto"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRaceSetupOpen(false);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="race-setup-title"
+            className="atelier-panel w-full max-w-5xl max-h-[94vh] overflow-y-auto rounded-3xl border border-white/12 shadow-[0_30px_120px_rgba(0,0,0,0.7)]"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-5 sm:px-7">
+              <div>
+                <div className="flex items-center gap-2 font-mono-tech text-[10px] uppercase tracking-[0.24em] text-[#F5C518]">
+                  <Flag className="h-3.5 w-3.5" /> Race Control · Grid Setup
+                </div>
+                <h2 id="race-setup-title" className="mt-2 font-display text-2xl sm:text-3xl font-bold uppercase tracking-wide text-white">
+                  Choose your race
+                </h2>
+                <p className="mt-1 text-sm text-zinc-400">Pick a circuit and conditions before the garage gate opens.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRaceSetupOpen(false)}
+                aria-label="Close race setup"
+                className="atelier-pill grid h-9 w-9 place-items-center rounded-full text-zinc-300 hover:text-white cursor-pointer"
+              >
+                <span className="text-xl leading-none">×</span>
+              </button>
+            </div>
+
+            <div className="space-y-7 px-5 py-5 sm:px-7 sm:py-6">
+              <section aria-labelledby="race-map-heading">
+                <div className="mb-3 flex items-end justify-between gap-3">
+                  <div>
+                    <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">01 · Circuit</div>
+                    <h3 id="race-map-heading" className="mt-1 font-display text-lg font-semibold text-white">Select a map</h3>
+                  </div>
+                  <span className="font-mono-tech text-[10px] uppercase tracking-wider text-zinc-500">3 routes</span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {RACE_MAPS.map((map, index) => {
+                    const Icon = index === 0 ? Map : index === 1 ? Waves : Mountain;
+                    const selected = raceSetupMap === map.id;
+                    const landscape = index === 0
+                      ? "linear-gradient(135deg, rgba(220,26,34,.45), rgba(13,16,24,.35) 58%, rgba(245,197,24,.16))"
+                      : index === 1
+                        ? "linear-gradient(135deg, rgba(30,142,185,.45), rgba(13,16,24,.35) 58%, rgba(50,200,170,.18))"
+                        : "linear-gradient(135deg, rgba(112,117,160,.46), rgba(13,16,24,.34) 58%, rgba(56,189,248,.18))";
+                    const routeShape = index === 0
+                      ? "M32 25 C54 11 87 17 109 19 C136 21 168 21 184 37 C199 52 179 69 158 70 C136 71 134 84 109 77 C83 70 62 84 42 69 C22 55 17 37 32 25 Z"
+                      : index === 1
+                        ? "M24 38 C39 18 59 19 77 27 C99 37 106 13 130 17 C153 20 157 41 180 34 C202 27 204 51 183 57 C161 63 174 81 151 79 C127 77 119 58 96 63 C71 69 64 84 43 72 C24 62 13 51 24 38 Z"
+                        : "M33 20 L68 15 L88 32 L115 17 L143 30 L169 22 L188 42 L169 55 L177 74 L144 81 L121 64 L94 79 L72 60 L45 72 L27 52 Z";
+                    const routeStart = index === 0 ? [32, 25] : index === 1 ? [24, 38] : [33, 20];
+                    return (
+                      <button
+                        key={map.id}
+                        type="button"
+                        onClick={() => setRaceSetupMap(map.id)}
+                        aria-pressed={selected}
+                        className={`overflow-hidden rounded-2xl border text-left transition-all cursor-pointer ${selected ? "border-[#F5C518] bg-[#F5C518]/[0.07] shadow-[0_0_26px_rgba(245,197,24,0.1)]" : "border-white/10 bg-black/25 hover:border-white/30"}`}
+                      >
+                        <div className="relative flex h-24 items-end justify-between overflow-hidden p-4" style={{ background: landscape }}>
+                          <svg className="absolute inset-0 h-full w-full opacity-75" viewBox="0 0 220 96" fill="none" aria-hidden="true">
+                            <path d={routeShape} stroke={selected ? "#F5C518" : "#FFFFFF"} strokeOpacity="0.82" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                            <circle cx={routeStart[0]} cy={routeStart[1]} r="3.5" fill={selected ? "#F5C518" : "#FFFFFF"} />
+                          </svg>
+                          <Icon className={`relative z-10 h-6 w-6 ${selected ? "text-[#F5C518]" : "text-white/80"}`} />
+                          <span className="relative rounded-full bg-black/45 px-2 py-1 font-mono-tech text-[9px] uppercase tracking-wider text-white/80">{map.region}</span>
+                        </div>
+                        <div className="p-4">
+                          <div className="font-display text-[15px] font-semibold text-white">{map.name}</div>
+                          <p className="mt-1.5 min-h-[2.5rem] text-xs leading-relaxed text-zinc-400">{map.description}</p>
+                          <div className={`mt-3 font-mono-tech text-[9px] uppercase tracking-[0.18em] ${selected ? "text-[#F5C518]" : "text-zinc-600"}`}>
+                            {selected ? "Selected circuit" : "Choose circuit"}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section aria-labelledby="race-weather-heading">
+                <div className="mb-3">
+                  <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">02 · Conditions</div>
+                  <h3 id="race-weather-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose time and weather</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {ENVIRONMENTS.map((environment, index) => {
+                    const Icon = index === 0 ? Sun : index === 1 ? Moon : CloudRain;
+                    const selected = raceSetupEnvironment === index;
+                    const note = index === 0 ? "Clear skies · full daylight" : index === 1 ? "Night run · lamps on" : "Wet asphalt · rain and fog";
+                    return (
+                      <button
+                        key={environment.id}
+                        type="button"
+                        onClick={() => setRaceSetupEnvironment(index)}
+                        aria-pressed={selected}
+                        className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#38BDF8]/70 bg-[#38BDF8]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
+                      >
+                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${selected ? "bg-[#38BDF8]/15 text-[#7DD3FC]" : "bg-white/5 text-zinc-400"}`}>
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <span>
+                          <span className="block font-display text-sm font-semibold">{environment.label}</span>
+                          <span className="mt-0.5 block font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">{note}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+              <span className="font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">Circuit and conditions lock in when the race starts.</span>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRaceSetupOpen(false)}
+                  className="atelier-pill rounded-xl px-4 py-2.5 font-mono-tech text-[10px] uppercase tracking-wider text-zinc-300 hover:text-white cursor-pointer"
+                >Cancel</button>
+                <button
+                  type="button"
+                  onClick={beginRace}
+                  disabled={o || !I || openingGate}
+                  className="flex items-center gap-2 rounded-xl border border-[#DC1A22]/70 bg-[#DC1A22] px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] disabled:opacity-50 cursor-pointer"
+                ><Flag className="h-3.5 w-3.5" />Start Race</button>
+              </div>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

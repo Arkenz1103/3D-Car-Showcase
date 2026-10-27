@@ -13,9 +13,10 @@
  * every mount, and never rebuilt when the player leaves and re-enters race mode.
  */
 import { useFrame } from "@react-three/fiber";
-import { memo, useRef } from "react";
+import { Fragment, memo, useRef } from "react";
 import { BoxGeometry, CylinderGeometry, MeshStandardMaterial } from "three";
 import { AI_COUNT, raceAi, raceDrive } from "./raceEngine";
+import { raceSession } from "./raceSession";
 import { markShadowsDirty } from "./sceneMotion";
 
 const unitBox = new BoxGeometry(1, 1, 1);
@@ -49,6 +50,18 @@ const tyreMaterial = new MeshStandardMaterial({
   metalness: 0.05,
   envMapIntensity: 0.6,
 });
+const headlampMaterial = new MeshStandardMaterial({
+  color: "#DCEEFF",
+  emissive: "#DCEEFF",
+  emissiveIntensity: 2.5,
+  toneMapped: false,
+});
+const taillampMaterial = new MeshStandardMaterial({
+  color: "#B0101A",
+  emissive: "#FF1A22",
+  emissiveIntensity: 1.6,
+  toneMapped: false,
+});
 
 const WHEELS = [
   [-0.88, 0.36, -1.5],
@@ -59,9 +72,15 @@ const WHEELS = [
 
 export const RaceOpponents = memo(function RaceOpponents() {
   const groups = useRef<any[]>([]);
+  const lampGroups = useRef<any[]>([]);
 
   useFrame(() => {
     const active = raceDrive.active;
+    const lampsOn = active && raceSession.carLightsOn;
+    for (let car = 0; car < AI_COUNT; car++) {
+      const lamps = lampGroups.current[car];
+      if (lamps && lamps.visible !== lampsOn) lamps.visible = lampsOn;
+    }
     if (!active) {
       for (let car = 0; car < AI_COUNT; car++) {
         const node = groups.current[car];
@@ -117,6 +136,19 @@ export const RaceOpponents = memo(function RaceOpponents() {
             position={[0, 1.2, 2.06]}
             scale={[1.78, 0.07, 0.52]}
           />
+          <group
+            visible={false}
+            ref={(node: any) => {
+              if (node) lampGroups.current[car] = node;
+            }}
+          >
+            {[-0.62, 0.62].map((x) => (
+              <Fragment key={x}>
+                <mesh geometry={unitBox} material={headlampMaterial} position={[x, 0.68, -2.18]} scale={[0.38, 0.14, 0.05]} />
+                <mesh geometry={unitBox} material={taillampMaterial} position={[x, 0.68, 2.18]} scale={[0.34, 0.13, 0.05]} />
+              </Fragment>
+            ))}
+          </group>
           {WHEELS.map((position, index) => (
             <mesh
               key={index}

@@ -28,7 +28,6 @@ import {
   curvatureAt,
   headingAt,
   projectOnTrack,
-  projectOnTrackFull,
   roadHeightAt,
   roadSlopeAt,
   samples,
@@ -45,7 +44,7 @@ export const AI_COUNT = 2;
 export const CAR = {
   /** metres/second — 63 m/s ≈ 227 km/h. */
   maxSpeed: 63,
-  /** Nitro tops out 25% above the natural top speed — a cap, not a rocket. */
+  /** Turbo tops out 25% above the natural top speed — a cap, not a rocket. */
   boostSpeed: 63 * 1.25,
   boostAccel: 15.5,
   accel: 21,
@@ -58,15 +57,15 @@ export const CAR = {
   yawRateMax: 2.4,
   grip: 7.6,
   driftGrip: 1.7,
-  /** Full tank empties in 4 s of held boost. */
-  nitroDrain: 1 / 4,
-  /** Empty bottle refills over 6 s — the same window as the lockout. */
-  nitroRegen: 1 / 6,
-  /** Boost is disabled for this long once the tank runs dry. */
-  nitroCooldown: 6,
-  nitroLapBonus: 0.3,
-  /** Speed lost while the car is sliding sideways. */
-  slideDrag: 0.05,
+  /** A turbo press launches one short, finite boost burst. */
+  turboDuration: 1.35,
+  /** Slow, skill-earned charge: a full refill needs roughly ten clean seconds. */
+  nitroRegen: 0.1,
+  /** Stay within this lane window and keep slip controlled to earn charge. */
+  precisionLineLimit: 4.8,
+  precisionSlipLimit: 12,
+  /** Light rolling loss from lateral scrub; keep normal cornering momentum. */
+  slideDrag: 0.004,
 };
 
 /** Upper speed (km/h) of gears 1..7. */
@@ -98,7 +97,6 @@ export const raceInput = {
   /** +1 = full left, -1 = full right. */
   steer: 0,
   handbrake: false,
-  boost: false,
 };
 
 /** Transform consumed by <VehicleModel/> once it runs in race mode. */
@@ -134,9 +132,7 @@ export const raceTelemetry = {
   redline: false,
   nitro: 1,
   nitroActive: false,
-  /** Seconds left before the bottle can be used again after running dry. */
-  nitroCooldown: 0,
-  nitroLocked: false,
+  turboReady: true,
   boostFx: 0,
   lap: 1,
   laps: TOTAL_LAPS,
@@ -169,7 +165,7 @@ export const raceTelemetry = {
  * raycasts, and the state lives in flat typed arrays so nothing allocates.
  */
 const AI_SKILL = [
-  /** Quick: a clean lap plus nitro is needed to beat it. */
+  /** Quick: a clean lap plus a well-timed turbo burst is needed to beat it. */
   { top: 60, accel: 13.5, latAccel: 16.5, line: 2.7 },
   /** Slower, drives the other side of the road so the pack reads as traffic. */
   { top: 56, accel: 11.5, latAccel: 13.2, line: -2.5 },
@@ -201,7 +197,8 @@ const vehicle = {
   vLat: 0,
   steer: 0,
   nitro: 1,
-  nitroCooldown: 0,
+  boostTimer: 0,
+  crashEventCooldown: 0,
   boostFx: 0,
   crashFx: 0,
   hint: 0,
@@ -266,7 +263,7 @@ export function gearForSpeed(speedKph: number) {
   return GEAR_BANDS.length - 1;
 }
 
-/** Parks the car on the start/finish line with a fresh tank of nitro. */
+/** Parks the car on the start/finish line with a fully charged turbo. */
 export function resetVehicle() {
   const o = 0;
   const tx = samples[o + 3];
@@ -285,7 +282,8 @@ export function resetVehicle() {
   vehicle.vLat = 0;
   vehicle.steer = 0;
   vehicle.nitro = 1;
-  vehicle.nitroCooldown = 0;
+  vehicle.boostTimer = 0;
+  vehicle.crashEventCooldown = 0;
   vehicle.boostFx = 0;
   vehicle.crashFx = 0;
   vehicle.hint = 0;
@@ -311,15 +309,13 @@ export function resetVehicle() {
   raceInput.brake = 0;
   raceInput.steer = 0;
   raceInput.handbrake = false;
-  raceInput.boost = false;
   raceTelemetry.lapTimes = race.lapTimes;
   raceTelemetry.topSpeedKph = 0;
   raceTelemetry.bestLap = 0;
   raceTelemetry.lastLap = 0;
   raceTelemetry.lap = 1;
   raceTelemetry.crashFx = 0;
-  raceTelemetry.nitroCooldown = 0;
-  raceTelemetry.nitroLocked = false;
+  raceTelemetry.turboReady = true;
   resetAi();
   syncDrive();
 }
@@ -462,7 +458,6 @@ function completeLap() {
   race.lastLap = race.lapTime;
   if (race.bestLap <= 0 || race.lastLap < race.bestLap) race.bestLap = race.lastLap;
   race.lapTimes.push(race.lastLap);
-  vehicle.nitro = Math.min(1, vehicle.nitro + CAR.nitroLapBonus);
   const wasBest = race.bestLap === race.lastLap;
   emit({ type: "lap", lap: race.lap, lapTime: race.lastLap, best: wasBest });
   race.lapTime = 0;
@@ -471,7 +466,6 @@ function completeLap() {
     raceTelemetry.phase = "finished";
     race.finishers = race.lap;
     raceInput.throttle = 0;
-    raceInput.boost = false;
     const summary: RaceSummary = {
       totalTime: race.totalTime,
       bestLap: race.bestLap,
@@ -537,10 +531,10 @@ function integrate(h: number, locked: boolean) {
   vehicle.steer = MathUtils.damp(vehicle.steer, steerInput * steerLimit, CAR.steerRate, h);
 
   // ------------------------------------------------------------- powertrain
-  // An empty bottle locks the boost out until the cooldown has expired.
-  vehicle.nitroCooldown = Math.max(0, vehicle.nitroCooldown - h);
-  const boosting =
-    !locked && input.boost && vehicle.nitro > 0.02 && vehicle.nitroCooldown <= 0 && vLong > 1;
+  // Q fires a finite burst; clean line-holding earns charge back directly.
+  vehicle.crashEventCooldown = Math.max(0, vehicle.crashEventCooldown - h);
+  vehicle.boostTimer = Math.max(0, vehicle.boostTimer - h);
+  const boosting = !locked && vehicle.boostTimer > 0;
   vehicle.boosting = boosting;
   const topSpeed = boosting ? CAR.boostSpeed : CAR.maxSpeed;
   let force = 0;
@@ -616,7 +610,16 @@ function integrate(h: number, locked: boolean) {
       vehicle.velZ *= 0.94;
       const strength = Math.min(1, outward / 16);
       if (strength > vehicle.crashFx) vehicle.crashFx = strength;
-      if (strength > 0.22) emit({ type: "crash", strength });
+      if (strength > 0.18) {
+        // Impacts cancel any burst and drain the reserve; clean driving earns it back.
+        vehicle.nitro = 0;
+        vehicle.boostTimer = 0;
+        vehicle.boosting = false;
+        if (vehicle.crashEventCooldown <= 0) {
+          vehicle.crashEventCooldown = 0.55;
+          emit({ type: "crash", strength });
+        }
+      }
     }
   }
 
@@ -625,15 +628,24 @@ function integrate(h: number, locked: boolean) {
   vehicle.curvature = probe.curvature;
   vehicle.slope = roadSlopeAt(probe.index, probe.blend);
 
-  // ------------------------------------------------------------------ nitro
-  if (boosting) {
-    vehicle.nitro = Math.max(0, vehicle.nitro - CAR.nitroDrain * h);
-    // Running the bottle dry costs a 6 s lockout; the tank refills over it.
-    if (vehicle.nitro <= 0) vehicle.nitroCooldown = CAR.nitroCooldown;
-  } else vehicle.nitro = Math.min(1, vehicle.nitro + CAR.nitroRegen * h);
-
+  // ----------------------------------------------------------- turbo charge
   const along = vehicle.velX * probe.forwardX + vehicle.velZ * probe.forwardZ;
   const groundSpeed = Math.hypot(vehicle.velX, vehicle.velZ);
+  const linePrecision = Math.max(0, 1 - Math.abs(probe.lateral) / CAR.precisionLineLimit);
+  const slipPrecision = Math.max(0, 1 - Math.abs(vehicle.vLat) / CAR.precisionSlipLimit);
+  const cleanDriving =
+    !locked &&
+    !boosting &&
+    vehicle.crashFx < 0.08 &&
+    groundSpeed > 8 &&
+    along > 1.5 &&
+    linePrecision > 0 &&
+    slipPrecision > 0;
+  if (cleanDriving && vehicle.nitro < 1) {
+    const precisionBonus = 0.7 + 0.3 * linePrecision * slipPrecision;
+    vehicle.nitro = Math.min(1, vehicle.nitro + CAR.nitroRegen * precisionBonus * h);
+  }
+
   vehicle.topSpeedKph = Math.max(vehicle.topSpeedKph, groundSpeed * 3.6);
   vehicle.speedTotal += groundSpeed * 3.6;
   vehicle.speedSamples += 1;
@@ -696,8 +708,7 @@ function syncDrive() {
   raceTelemetry.averageSpeedKph = vehicle.speedSamples ? vehicle.speedTotal / vehicle.speedSamples : 0;
   raceTelemetry.phase = race.phase;
   raceTelemetry.countdown = race.countdown;
-  raceTelemetry.nitroCooldown = vehicle.nitroCooldown;
-  raceTelemetry.nitroLocked = vehicle.nitroCooldown > 0;
+  raceTelemetry.turboReady = vehicle.nitro >= 0.999;
   raceTelemetry.handbraking = raceInput.handbrake;
   computePosition();
 }
@@ -789,40 +800,22 @@ export function stepRace(rawDelta: number) {
   syncDrive();
 }
 
-/**
- * The instant kick of a nitro bottle — called on the Shift key edge. A hard
- * impulse along the car's forward axis, capped by the remaining headroom to the
- * boost top speed, plus an immediate FOV punch.
- */
-export function applyNitroImpulse() {
-  if (race.phase !== "racing" && race.phase !== "countdown") return false;
-  // An empty or locked out bottle ignores the Shift edge entirely.
-  if (vehicle.nitro <= 0.02 || vehicle.nitroCooldown > 0) return false;
+/** One finite turbo burst, triggered by a single Q press while driving cleanly. */
+export function activateTurbo() {
+  if (race.phase !== "racing" || vehicle.nitro < 0.999) return false;
+  if (vehicle.vLong < 2.5 || vehicle.wrongWayTimer > 0.15 || vehicle.crashFx >= 0.08) return false;
+  vehicle.nitro = 0;
+  vehicle.boostTimer = CAR.turboDuration;
+  vehicle.boosting = true;
   const forwardX = -Math.sin(vehicle.heading);
   const forwardZ = -Math.cos(vehicle.heading);
   const headroom = Math.max(0, CAR.boostSpeed - vehicle.vLong);
-  const kick = Math.min(headroom, CAR.boostSpeed * 0.3) + 2.6;
+  const kick = Math.min(headroom, CAR.boostSpeed * 0.08) + 1.5;
   vehicle.velX += forwardX * kick;
   vehicle.velZ += forwardZ * kick;
   vehicle.vLong += kick;
   vehicle.previousVLong = vehicle.vLong;
   vehicle.boostFx = 1;
-  return true;
-}
-
-/** Teleports the car back onto the centreline — used by the track reset key. */
-export function recoverVehicle() {
-  const probe = projectOnTrackFull(vehicle.x, vehicle.z);
-  vehicle.x = samples[probe.index * 7] + (probe.forwardZ * -probe.lateral);
-  vehicle.z = samples[probe.index * 7 + 2] + (-probe.forwardX * -probe.lateral);
-  vehicle.heading = headingAt(probe.index, probe.blend);
-  vehicle.velX = 0;
-  vehicle.velZ = 0;
-  vehicle.vLong = 0;
-  vehicle.vLat = 0;
-  vehicle.previousVLong = 0;
-  vehicle.hint = probe.index;
-  vehicle.prevIndex = probe.index;
-  vehicle.y = roadHeightAt(probe.index, probe.blend);
   syncDrive();
+  return true;
 }
