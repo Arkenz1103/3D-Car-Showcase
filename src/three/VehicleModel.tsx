@@ -5,6 +5,7 @@ import { classifyMesh } from "@/lib/gltf";
 import { liftTimeline } from "@/three/liftTimeline";
 import { raceDrive, raceInput } from "@/three/raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
+import { isBrakeLightSurface } from "./brakeLights";
 import { getNeonPalette } from "./neonColor";
 import { drawDashboardDisplay, makeStudioTextures } from "@/three/textures";
 import { Html } from "@react-three/drei";
@@ -32,21 +33,31 @@ import {
 // ---------------------------------------------------------------------------
 // Door handling
 //
-// Several of the bundled showroom models are authored with the doors swung
-// open (the hinge node itself carries the open rotation, the panels are modelled
-// shut). Racing with the doors flapping in the wind looks broken, so every
-// `*_hinge` node discovered on the clone is damped back to its neutral
-// (identity) pose as soon as `raceDrive.active` goes true.
-//
-// Models that ship with the doors already shut — or with no door nodes at all
-// (`car-3`, the SF90's lone `Aero_Door_Latches`) — are simply a no-op: a hinge
-// that is already at identity fails the `angleTo` test and is skipped.
+// The Aventador's authored showroom pose has its scissor doors raised. Its
+// closed race pose is side-specific: the shared frame and door A are neutral,
+// while door B needs a -0.465 rad local Y correction. Preserve authored poses
+// for restoring the showroom and leave other models' hinge nodes untouched.
 // ---------------------------------------------------------------------------
 const DOOR_CLOSED = new Quaternion();
+const DOOR_B_CLOSED = new Quaternion(0, Math.sin(-0.465 / 2), 0, Math.cos(-0.465 / 2));
+const BODY_UNDERGLOW_INTENSITY = 7.5;
+const CABIN_AMBIENCE_INTENSITY = 5.2;
 const STEERING_AXIS_Z = new Vector3(0, 0, 1);
 
-/** Paint-matched underbody pools and cool cabin practicals.
- * Light objects stay mounted; toggling only flips their visibility. */
+function getRaceDoorPose(node) {
+  switch (node.name.toLowerCase()) {
+    case "doors_hinge":
+    case "door_a_hinge":
+      return DOOR_CLOSED;
+    case "door_b_hinge":
+      return DOOR_B_CLOSED;
+    default:
+      return null;
+  }
+}
+
+/** Paint-matched underbody and garage-cabin ambience. All six lights stay
+ * mounted at a fixed shader layout; toggles only adjust intensity to avoid recompilation hitches. */
 export function NeonLighting({ bodyEnabled, interiorEnabled, bodyColor }) {
   const lights = React.useMemo(() => Array.from({ length: 6 }, () => React.createRef()), []);
   const materials = React.useMemo(() => Array.from({ length: 2 }, () => React.createRef()), []);
@@ -73,25 +84,42 @@ export function NeonLighting({ bodyEnabled, interiorEnabled, bodyColor }) {
   React.useEffect(() => () => glowTexture.dispose(), [glowTexture]);
 
   React.useLayoutEffect(() => {
+    // Keep a fixed six-light shader layout. Toggling Light.visible changes the
+    // active-light defines and can trigger a costly compile across the car's
+    // many materials; intensity changes are uniform-only and avoid that hitch.
     lights.forEach((ref, index) => {
       const light = ref.current;
       if (!light) return;
-      light.visible = index < 4 ? bodyEnabled : interiorEnabled;
-      light.color.set(index < 4 ? palette.underglow : palette.interior);
+      light.visible = true;
+      light.intensity =
+        index < 4
+          ? bodyEnabled
+            ? BODY_UNDERGLOW_INTENSITY
+            : 0
+          : interiorEnabled
+            ? CABIN_AMBIENCE_INTENSITY
+            : 0;
+    });
+  }, [bodyEnabled, interiorEnabled, lights]);
+
+  React.useLayoutEffect(() => {
+    lights.forEach((ref, index) => {
+      const light = ref.current;
+      if (light) light.color.set(index < 4 ? palette.underglow : palette.interior);
     });
     materials.forEach((ref) => {
       if (ref.current) ref.current.color.set(palette.underglow);
     });
-  }, [bodyEnabled, interiorEnabled, lights, materials, palette]);
+  }, [lights, materials, palette]);
 
   return (
-    <group name="Paint_Matched_Neon_Underglow_And_Cockpit_Ambience">
-      <pointLight ref={lights[0]} position={[-0.72, 0.13, -1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
-      <pointLight ref={lights[1]} position={[0.72, 0.13, -1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
-      <pointLight ref={lights[2]} position={[-0.72, 0.13, 1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
-      <pointLight ref={lights[3]} position={[0.72, 0.13, 1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
-      <pointLight ref={lights[4]} position={[-0.3, 0.84, -0.35]} intensity={5.2} distance={1.9} decay={2} color="#A77BFF" />
-      <pointLight ref={lights[5]} position={[0.3, 0.84, -0.35]} intensity={5.2} distance={1.9} decay={2} color="#A77BFF" />
+    <group name="Paint_Matched_Neon_Underglow_And_Garage_Cabin_Ambience">
+      <pointLight ref={lights[0]} position={[-0.72, 0.13, -1.15]} intensity={0} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[1]} position={[0.72, 0.13, -1.15]} intensity={0} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[2]} position={[-0.72, 0.13, 1.15]} intensity={0} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[3]} position={[0.72, 0.13, 1.15]} intensity={0} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[4]} position={[-0.3, 0.84, -0.35]} intensity={0} distance={1.9} decay={2} color="#A77BFF" />
+      <pointLight ref={lights[5]} position={[0.3, 0.84, -0.35]} intensity={0} distance={1.9} decay={2} color="#A77BFF" />
       <mesh
         position={[0, 0.014, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
@@ -170,9 +198,8 @@ export function NeonLighting({ bodyEnabled, interiorEnabled, bodyColor }) {
  */
 const HEADLIGHT_LOW_BEAM = 340;
 
-export const HeadlightBeams = ({ on, brake }) => {
+export const HeadlightBeams = ({ on }) => {
   const invalidate = useThree((state) => state.invalidate);
-  const brakeGlow = React.useRef(null);
   const units = React.useMemo(
     () =>
       [-1, 1].map((side) => {
@@ -195,15 +222,6 @@ export const HeadlightBeams = ({ on, brake }) => {
 
   React.useEffect(() => () => units.forEach(({ spot }) => spot.dispose()), [units]);
 
-  useFrame(() => {
-    const lamp = brakeGlow.current;
-    if (!lamp) return;
-    const braking = raceDrive.active
-      ? raceDrive.braking || raceDrive.handbraking || raceInput.brake > 0
-      : brake;
-    lamp.intensity = braking ? 5.5 : 0;
-  });
-
   return (
     <group name="Matrix_LED_Beams">
       {units.map((unit, i) => (
@@ -218,14 +236,6 @@ export const HeadlightBeams = ({ on, brake }) => {
         distance={3.2}
         decay={2}
         color="#DCEEFF"
-      />
-      <pointLight
-        ref={brakeGlow}
-        position={[0, 0.74, 2.32]}
-        intensity={0}
-        distance={3.6}
-        decay={2}
-        color="#FF1A22"
       />
     </group>
   );
@@ -317,7 +327,8 @@ export const VehicleModel = React.memo(
         XA = [],
         hA = [],
         vA = [],
-        doorNodes = [];
+        doorNodes = [],
+        doorOpenQuaternions = [];
       let HA = null,
         lg = null;
       return (
@@ -332,9 +343,11 @@ export const VehicleModel = React.memo(
             (Wg.name === "Knuckle_FL" || Wg.name === "Knuckle_FR") && vA.push(Wg),
             (Wg.name === "F1_Steering_Wheel_Group" || Wg.name === "steering_wheel") && (HA = Wg),
             Wg.name === "ShutOff_Gurney_Mobile_Flap" && (lg = Wg),
-            // Door hinges are captured BEFORE the mesh early-out: they are plain
-            // Object3D pivots, never meshes.
-            /hinge/i.test(Wg.name) && !/latch/i.test(Wg.name) && doorNodes.push(Wg),
+            // Preserve authored hinge quaternions so showroom pose is restored
+            // when racing ends. The race target is applied only to Aventador pivots.
+            /hinge/i.test(Wg.name) &&
+              !/latch/i.test(Wg.name) &&
+              (doorNodes.push(Wg), doorOpenQuaternions.push(Wg.quaternion.clone())),
             !Wg.isMesh)
           )
             return;
@@ -355,7 +368,23 @@ export const VehicleModel = React.memo(
           const zg = !Q.isBundledReference,
             $ = (mg?.name || "").toLowerCase();
           if (zg) {
-            if (/body|paint/.test($) && !/badge|emblem|glass|interior|trim/.test($)) {
+            if (isBrakeLightSurface(yg.name, mg?.name || "")) {
+              // Identify authored rear lamp surfaces directly from their GLB
+              // labels, even when a custom asset's broader mesh classifier differs.
+              eg =
+                mg?.clone() ||
+                new MeshStandardMaterial({
+                  name: "Custom_Brake_Lamp",
+                  color: new Color("#2A080A"),
+                });
+              eg.emissive.set("#FF1A22");
+              eg.emissiveIntensity = 0;
+              eg.toneMapped = false;
+              Tg.push(eg);
+            } else if (Mg === "taillights") {
+              // Keep authored lamp housings, but do not treat them as emitters.
+              eg = mg?.clone() || new MeshStandardMaterial({ color: "#1C1F26" });
+            } else if (/body|paint/.test($) && !/badge|emblem|glass|interior|trim/.test($)) {
               const xA = new MeshPhysicalMaterial({
                 name: "TailorMade_Coachwork",
                 color: new Color(e),
@@ -539,9 +568,14 @@ export const VehicleModel = React.memo(
                 roughness: 0.35,
               });
           } else if (Mg === "taillights") {
-            if (/outer_lens/.test(tA)) {
+            if (!isBrakeLightSurface(yg.name, mg?.name || "")) {
+              // Some GLBs reuse their red taillight material on steering-wheel
+              // shift LEDs or include a separate dark lamp housing.
+              eg = mg?.clone();
+            } else if (/outer_lens/.test(tA)) {
               const xA = new MeshStandardMaterial({
                 name: "Taillight_Ruby_Lens",
+                toneMapped: false,
                 color: new Color("#9E0B12"),
                 emissive: new Color("#DC1A22"),
                 emissiveIntensity: 0.9,
@@ -555,6 +589,7 @@ export const VehicleModel = React.memo(
             } else {
               const xA = new MeshStandardMaterial({
                 name: "Taillight_LED_Ring",
+                toneMapped: false,
                 color: new Color("#FF1E26"),
                 emissive: new Color("#FF1A22"),
                 emissiveIntensity: 2.2,
@@ -672,10 +707,6 @@ export const VehicleModel = React.memo(
             eg.emissive.set("#DCEEFF");
             Ug.push(eg);
           }
-          if (zg && Mg === "taillights" && !/housing|bezel/.test(tA)) {
-            eg.emissive.set("#FF1A22");
-            Tg.push(eg);
-          }
           if (eg.transparent) eg.forceSinglePass = true;
           yg.material = eg;
           const T = yg.geometry,
@@ -721,6 +752,7 @@ export const VehicleModel = React.memo(
           steeringWheelBaseQuaternion: HA ? HA.quaternion.clone() : null,
           gurneyFlapNode: lg,
           doorNodes,
+          doorOpenQuaternions,
         }
       );
     }, [Q, p, X]);
@@ -781,7 +813,8 @@ export const VehicleModel = React.memo(
             L.taillightEmissiveMats.includes(BA.material))
           ) {
             const MA = BA.material.name.includes("Lens");
-            BA.baseEmissiveIntensity = V ? (MA ? 1.85 : 3.8) : h ? (MA ? 0.65 : 1.45) : 0;
+            // Keep tail/brake emitters dark with headlights alone; only brake input lights these surfaces.
+            BA.baseEmissiveIntensity = V ? (MA ? 1.85 : 3.8) : 0;
           }
           if (L.hybridEmissiveMats.includes(BA.material)) {
             const MA = {
@@ -932,25 +965,34 @@ export const VehicleModel = React.memo(
           racing
             ? (Math.abs(raceDrive.spinRate) > 0.05 && ((rA.rotation.x -= WA * raceDrive.spinRate), (JA = !0)))
             : y && ((rA.rotation.x -= WA * 16.5), (JA = !0)));
-      // Doors shut for the race. SlERPing the hinge back to identity is the only
-      // allocation free way to animate a quaternion pivot, and hinges that are
-      // already neutral cost one `angleTo` comparison.
-      if (racing && L.doorNodes.length) {
-        const rA = 1 - Math.exp(-7 * WA);
-        for (const kA of L.doorNodes) {
-          if (kA.quaternion.angleTo(DOOR_CLOSED) < 0.002) continue;
-          kA.quaternion.slerp(DOOR_CLOSED, rA);
+      // Apply the Aventador's measured closed pose in races, then restore the
+      // exact authored showroom rotations when the race is inactive.
+      if (L.doorNodes.length) {
+        let doorsChanged = false;
+        for (let index = 0; index < L.doorNodes.length; index++) {
+          const hinge = L.doorNodes[index];
+          const racePose = getRaceDoorPose(hinge);
+          const target = racing && racePose ? racePose : L.doorOpenQuaternions[index];
+          if (hinge.quaternion.angleTo(target) < 0.002 && hinge.matrixAutoUpdate) continue;
+          hinge.matrixAutoUpdate = true;
+          hinge.quaternion.copy(target);
+          hinge.updateMatrix();
+          doorsChanged = true;
+        }
+        if (doorsChanged) {
+          L.root.updateMatrixWorld(true);
           JA = true;
         }
       }
       // Brake lights flare straight from the simulation — no React round trip.
       if (racing && L.taillightEmissiveMats.length) {
-        const brakeOrDrift = raceDrive.braking || raceDrive.handbraking || raceInput.brake > 0;
+        const brakeOrDrift =
+          raceDrive.braking || raceDrive.handbraking || raceInput.brake > 0 || raceInput.handbrake;
         for (const rA of L.taillightEmissiveMats)
           rA.emissiveIntensity = brakeOrDrift
             ? rA.name.includes("Lens")
-              ? 1.85
-              : 3.8
+              ? 5.5
+              : 9.5
             : 0;
       }
       if (JA) {
@@ -992,6 +1034,7 @@ export const VehicleModel = React.memo(
         ((document.body.style.cursor = "auto"), q.current !== null && ((q.current = null), C(null)));
       },
       wA = (BA) => {
+        if (!I) return;
         BA.stopPropagation();
         const MA = BA.nativeEvent.clientX - G.current.x,
           WA = BA.nativeEvent.clientY - G.current.y;
@@ -1033,7 +1076,7 @@ export const VehicleModel = React.memo(
             </mesh>
           )}
           <NeonLighting bodyEnabled={bodyGlowOn} interiorEnabled={interiorLightsOn} bodyColor={e} />
-          <HeadlightBeams on={h} brake={V} />
+          <HeadlightBeams on={h} />
           <primitive
             object={L.root}
             dispose={null}
