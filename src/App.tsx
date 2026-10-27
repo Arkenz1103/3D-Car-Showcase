@@ -33,15 +33,20 @@ import {
   ChevronsUp,
   CircleAlert,
   Compass,
+  DoorClosed,
+  DoorOpen,
   Eye,
   EyeOff,
   Flag,
   Lightbulb,
   Maximize2,
+  Moon,
   MousePointerClick,
   Palette,
+  Sun,
   RotateCw,
   SlidersVertical,
+  Sparkles,
   Upload,
   Wind,
 } from "lucide-react";
@@ -94,15 +99,27 @@ export function App() {
     [nA, rA] = React.useState(!1),
     [kA, og] = React.useState(!1),
     [$A, Ug] = React.useState(!1),
-    [Tg, XA] = React.useState(!0),
+    // Keep the showroom presentation lights off until the user enables them.
+    [Tg, XA] = React.useState(false),
     [hA, vA] = React.useState(!1),
     [HA, lg] = React.useState(-10),
     [Wg, yg] = React.useState(!0),
     [Mg, mg] = React.useState(!1),
     [tA, eg] = React.useState("garage"),
     [zg, $] = React.useState(!1),
-    [raceMode, setRaceMode] = React.useState(!1);
+    [raceMode, setRaceMode] = React.useState(!1),
+    [garageGateOpen, setGarageGateOpen] = React.useState(false),
+    [openingGate, setOpeningGate] = React.useState(false),
+    [garageLightsOn, setGarageLightsOn] = React.useState(true),
+    [neonLightsOn, setNeonLightsOn] = React.useState(false);
   const requestSequence = React.useRef(0);
+  const raceTransitionTimer = React.useRef(null);
+  React.useEffect(
+    () => () => {
+      if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
+    },
+    [],
+  );
   const commitAsset = React.useCallback((asset, car) => {
     React.startTransition(() => {
       C(asset);
@@ -275,7 +292,15 @@ export function App() {
     W(false);
     n(null);
     mg(!1);
-    setRaceMode(!0);
+    // Give the motorized shutter time to rise in the showroom before handing
+    // the scene to the existing circuit and driving controls.
+    setGarageGateOpen(true);
+    setOpeningGate(true);
+    raceTransitionTimer.current = window.setTimeout(() => {
+      raceTransitionTimer.current = null;
+      setOpeningGate(false);
+      setRaceMode(true);
+    }, 1350);
   }, [I, o]);
   const exitRace = React.useCallback(() => {
     // No entrance replay: the timeline stays parked where it was.
@@ -283,6 +308,12 @@ export function App() {
     // Tear the graph down so nothing keeps running (or holding the audio
     // device) while the showroom is on screen.
     disposeAudio();
+    setGarageGateOpen(false);
+    setOpeningGate(false);
+    if (raceTransitionTimer.current !== null) {
+      window.clearTimeout(raceTransitionTimer.current);
+      raceTransitionTimer.current = null;
+    }
     setRaceMode(!1);
   }, []);
   // Browsers suspend the context when the tab is backgrounded; re-arm it on the
@@ -295,6 +326,18 @@ export function App() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [raceMode]);
+  const toggleGarageGate = React.useCallback(() => {
+    if (!openingGate && !raceMode) setGarageGateOpen((open) => !open);
+  }, [openingGate, raceMode]);
+  const toggleGarageLights = React.useCallback(() => setGarageLightsOn((on) => !on), []);
+  const toggleNeonLighting = React.useCallback(() => setNeonLightsOn((enabled) => !enabled), []);
+  const toggleGurney = React.useCallback(() => {
+    const enabled = !nA;
+    rA(enabled);
+    // Gurney-linked streamlines are enabled for the high-downforce pose and
+    // cleared again when the flap is shut, so stale flow lines cannot linger.
+    og(enabled);
+  }, [nA]);
   const toggleOrbit = React.useCallback(() => {
     liftTimeline.pauseShowcase();
     if (G.interior) {
@@ -326,17 +369,17 @@ export function App() {
           cA.key.toLowerCase() === "x"
             ? MA((yA) => (yA === "xray" ? "solid" : "xray"))
             : cA.key.toLowerCase() === "g"
-              ? rA((yA) => !yA)
+              ? toggleGurney()
               : cA.key.toLowerCase() === "h"
                 ? $((yA) => !yA)
                 : cA.key.toLowerCase() === "l"
-                  ? XA((yA) => !yA)
+                  ? toggleNeonLighting()
                   : cA.key.toLowerCase() === "r"
                     ? replayEntrance()
                     : cA.key === "Escape" && (P(null), G.interior && KA("hero"));
     };
     return (window.addEventListener("keydown", x), () => window.removeEventListener("keydown", x));
-  }, [KA, G.interior, replayEntrance, raceMode]);
+  }, [KA, G.interior, replayEntrance, raceMode, toggleNeonLighting, toggleGurney]);
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
@@ -360,7 +403,9 @@ export function App() {
       <Canvas
         frameloop="demand"
         shadows={!0}
-        dpr={1.2}
+        // Clamp high-density screens to avoid rendering several million
+        // unnecessary pixels per frame on phones and retina laptops.
+        dpr={[1, 1.5]}
         gl={CANVAS_GL}
         camera={CANVAS_CAMERA}
         onPointerMissed={clearSelection}
@@ -403,6 +448,7 @@ export function App() {
               steeringAngleDeg={HA}
               technicalView={BA}
               powerMode={WA}
+              neonLightsOn={neonLightsOn}
               showHotspotPins={Wg && !zg && !G.interior && !raceMode}
             />
           </RaceVehicleRig>
@@ -410,7 +456,14 @@ export function App() {
         {!raceMode && (
           <>
             <LiftDirector entranceSeq={E} />
-            <Showroom theme={H} showAeroStreamlines={kA} highDownforceGurney={nA} rollingRoad={$A} />
+            <Showroom
+              theme={H}
+              showAeroStreamlines={kA}
+              highDownforceGurney={nA}
+              rollingRoad={$A}
+              garageGateOpen={garageGateOpen}
+              garageLightsOn={garageLightsOn}
+            />
             <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
           </>
         )}
@@ -537,12 +590,37 @@ export function App() {
             <button
               type="button"
               onClick={enterRace}
-              disabled={o || !I}
+              disabled={o || !I || openingGate}
               className="atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border-[#DC1A22]/60 text-white bg-[#DC1A22]/20 hover:bg-[#DC1A22]/35"
-              title="Enter Race Mode — Drive the Circuit [WASD · Shift Nitro · Space Handbrake]"
+              title="Enter Race Mode — the garage gate opens before driving controls start"
             >
               <Flag className="w-3.5 h-3.5 text-[#DC1A22]" />
-              <span className="font-mono-tech text-[10px] uppercase tracking-wider">Race</span>
+              <span className="font-mono-tech text-[10px] uppercase tracking-wider">{openingGate ? "Opening…" : "Race"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleGarageGate}
+              disabled={openingGate}
+              aria-label={garageGateOpen ? "Close Garage Gate" : "Open Garage Gate"}
+              aria-pressed={garageGateOpen}
+              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${garageGateOpen ? "border-[#F5C518]/50 text-[#F5C518]" : "text-zinc-300 hover:text-white"}`}
+              title={garageGateOpen ? "Close the motorized garage gate" : "Open the motorized garage gate"}
+            >
+              {garageGateOpen ? <DoorOpen className="w-3.5 h-3.5" /> : <DoorClosed className="w-3.5 h-3.5" />}
+              <span className="hidden md:inline font-mono-tech text-[10px] uppercase tracking-wider">Gate</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleGarageLights}
+              aria-label={garageLightsOn ? "Turn garage lights off" : "Turn garage lights on"}
+              aria-pressed={garageLightsOn}
+              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${garageLightsOn ? "text-[#F5C518]" : "border-[#E04BFF]/60 text-[#E7B5FF] bg-[#8A16A5]/15"}`}
+              title={garageLightsOn ? "Switch off the garage lights to show the underglow" : "Switch the garage lights back on"}
+            >
+              {garageLightsOn ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              <span className="hidden xl:inline font-mono-tech text-[10px] uppercase tracking-wider">
+                {garageLightsOn ? "Garage Lights" : "Garage Dark"}
+              </span>
             </button>
             <button
               type="button"
@@ -592,12 +670,23 @@ export function App() {
               type="button"
               onClick={() => XA((x) => !x)}
               className={`atelier-pill px-3 py-2 rounded-xl font-mono-tech text-[11px] uppercase flex items-center gap-1.5 transition-all cursor-pointer ${Tg ? "border-[#F5C518] text-[#F5C518] bg-[#F5C518]/15" : "text-zinc-400 hover:text-white"}`}
-              title="Toggle Matrix LED Headlights & Tail Lights [Key: L]"
+              title="Toggle Matrix LED Headlights & Tail Lights"
               aria-label="Toggle car lights"
               aria-pressed={Tg}
             >
               <Lightbulb className="w-3.5 h-3.5" />
               <span className="hidden 2xl:inline">{Tg ? "Lights On" : "Lights Off"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleNeonLighting}
+              className={`atelier-pill px-3 py-2 rounded-xl font-mono-tech text-[10px] uppercase flex items-center gap-1.5 transition-all cursor-pointer ${neonLightsOn ? "border-[#E04BFF] text-[#F19BFF] bg-[#B000FF]/15" : "text-zinc-300 hover:text-white"}`}
+              title="Toggle violet underglow and cockpit ambient lighting [Key: L]"
+              aria-label="Toggle Underglow and cockpit lighting"
+              aria-pressed={neonLightsOn}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#E04BFF]" />
+              <span>Underglow [L]</span>
             </button>
             <button
               type="button"
@@ -669,7 +758,7 @@ export function App() {
           powerMode={WA}
           onChangePowerMode={JA}
           highDownforceGurney={nA}
-          onToggleGurney={() => rA((x) => !x)}
+          onToggleGurney={toggleGurney}
           showAeroStreamlines={kA}
           onToggleStreamlines={() => og((x) => !x)}
           rollingRoad={$A}
@@ -715,7 +804,7 @@ export function App() {
           brakeLightsOn={hA}
           onToggleBrakeLights={() => vA((x) => !x)}
           highDownforceGurney={nA}
-          onToggleGurney={() => rA((x) => !x)}
+          onToggleGurney={toggleGurney}
           showAeroStreamlines={kA}
           onToggleStreamlines={() => og((x) => !x)}
           rollingRoad={$A}
@@ -777,10 +866,7 @@ export function App() {
             <div className="w-[1px] h-4 bg-white/15 mx-1 shrink-0" />
             <button
               type="button"
-              onClick={() => {
-                const x = !nA;
-                (rA(x), x && !kA && og(!0));
-              }}
+              onClick={toggleGurney}
               className={`px-3 py-1.5 rounded-xl font-mono-tech text-[10px] uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${nA ? "bg-[#DC1A22]/30 border border-[#DC1A22] text-white" : "text-zinc-300 hover:text-white hover:bg-white/8"}`}
               title="Actuate Patented Shut-Off Gurney Active Rear Wing [Key: G]"
             >

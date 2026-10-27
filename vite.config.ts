@@ -10,6 +10,16 @@ const __dirname = path.dirname(__filename);
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Arena's preview proxy uses a host different from localhost. Bind to all
+  // interfaces and allow that forwarded hostname in both dev and preview mode.
+  server: {
+    host: "0.0.0.0",
+    allowedHosts: [".e2b.app"],
+  },
+  preview: {
+    host: "0.0.0.0",
+    allowedHosts: [".e2b.app"],
+  },
   plugins: [react(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {
