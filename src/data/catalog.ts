@@ -368,8 +368,9 @@ export const CAMERA_PRESETS = [
     id: "cockpit",
     label: "Driver's Eye Digital Cockpit",
     shortLabel: "Cockpit",
-    position: [-0.346, 0.965, 0.16],
-    target: [-0.346, 0.79, -0.58],
+    // Pull back behind the rim and aim through it toward the digital cluster.
+    position: [-0.346, 1.3, 0.85],
+    target: [-0.346, 0.88, -0.82],
     fov: 54,
     interior: !0,
   },
@@ -377,9 +378,11 @@ export const CAMERA_PRESETS = [
     id: "overhead",
     label: "Planform Aerodynamic View",
     shortLabel: "Top Plan",
-    position: [0.02, 7.4, 0.12],
+    // Keep the complete car in frame, with a slight offset to avoid a singular
+    // straight-down look-at direction in OrbitControls.
+    position: [0.02, 10.5, 0.45],
     target: [0, 0.45, 0.08],
-    fov: 36,
+    fov: 40,
     overview: true,
   },
 ];

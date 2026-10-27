@@ -43,6 +43,7 @@ import {
 // that is already at identity fails the `angleTo` test and is skipped.
 // ---------------------------------------------------------------------------
 const DOOR_CLOSED = new Quaternion();
+const STEERING_AXIS_Z = new Vector3(0, 0, 1);
 
 /** Paint-matched underbody pools and cool cabin practicals.
  * Light objects stay mounted; toggling only flips their visibility. */
@@ -284,6 +285,8 @@ export const VehicleModel = React.memo(
         const BA = new CanvasTexture(m);
         return ((BA.colorSpace = SRGBColorSpace), (BA.flipY = !1), (BA.needsUpdate = !0), BA);
       }, [m]);
+    const steeringWheelRotation = React.useMemo(() => new Quaternion(), []);
+    const steeringWheelAngle = React.useRef(0);
     React.useEffect(() => {
       (drawDashboardDisplay(m, K, y ? 250 : 0), (X.needsUpdate = !0));
     }, [m, X, K, y]);
@@ -703,11 +706,18 @@ export const VehicleModel = React.memo(
           wheelSpinNodes: hA,
           frontSteerNodes: vA,
           steeringWheelGroup: HA,
+          steeringWheelBaseQuaternion: HA ? HA.quaternion.clone() : null,
           gurneyFlapNode: lg,
           doorNodes,
         }
       );
     }, [Q, p, X]);
+    React.useLayoutEffect(() => {
+      steeringWheelAngle.current = 0;
+      if (L.steeringWheelGroup && L.steeringWheelBaseQuaternion) {
+        L.steeringWheelGroup.quaternion.copy(L.steeringWheelBaseQuaternion);
+      }
+    }, [L]);
     (React.useEffect(() => {
       E(L.inventory);
     }, [L.inventory, E]),
@@ -897,10 +907,12 @@ export const VehicleModel = React.memo(
       for (const rA of L.frontSteerNodes)
         ((rA.rotation.y = MathUtils.damp(rA.rotation.y, nA, 10, WA)),
           Math.abs(rA.rotation.y - nA) > 0.001 && (JA = !0));
-      if (L.steeringWheelGroup) {
-        const rA = -nA * 7.5;
-        L.steeringWheelGroup.rotation.z = MathUtils.damp(L.steeringWheelGroup.rotation.z, rA, 10, WA);
-        if (Math.abs(L.steeringWheelGroup.rotation.z - rA) > 0.001) JA = true;
+      if (L.steeringWheelGroup && L.steeringWheelBaseQuaternion) {
+        const rA = nA * 7.5;
+        steeringWheelAngle.current = MathUtils.damp(steeringWheelAngle.current, rA, 10, WA);
+        steeringWheelRotation.setFromAxisAngle(STEERING_AXIS_Z, steeringWheelAngle.current);
+        L.steeringWheelGroup.quaternion.copy(steeringWheelRotation).multiply(L.steeringWheelBaseQuaternion);
+        if (Math.abs(steeringWheelAngle.current - rA) > 0.001) JA = true;
       }
       for (const rA of L.wheelSpinNodes)
         (/fl|fr/i.test(rA.name) &&

@@ -102,7 +102,7 @@ export function App() {
     // Keep the showroom presentation lights off until the user enables them.
     [Tg, XA] = React.useState(false),
     [hA, vA] = React.useState(!1),
-    [HA, lg] = React.useState(-10),
+    [HA, lg] = React.useState(0),
     [Wg, yg] = React.useState(!0),
     [Mg, mg] = React.useState(!1),
     [tA, eg] = React.useState("garage"),
@@ -449,7 +449,7 @@ export function App() {
               technicalView={BA}
               powerMode={WA}
               neonLightsOn={neonLightsOn}
-              showHotspotPins={Wg && !zg && !G.interior && !raceMode}
+              showHotspotPins={Wg && !zg && !G.interior && !raceMode && U !== "overhead"}
             />
           </RaceVehicleRig>
         )}
