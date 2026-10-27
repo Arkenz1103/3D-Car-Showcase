@@ -10,6 +10,8 @@ import {
   CanvasTexture,
   CatmullRomCurve3,
   ClampToEdgeWrapping,
+  MathUtils,
+  Object3D,
   RepeatWrapping,
   SRGBColorSpace,
   TextureLoader,
@@ -35,6 +37,109 @@ export const PLATFORM_RADIUS = 2.62;
 export const PIT_RADIUS = 2.74;
 
 export const STREAMLINE_OFFSETS = [-0.66, -0.44, -0.22, 0, 0.22, 0.44, 0.66];
+
+const GATE_OPEN_TRAVEL = 4.35;
+const GATE_SLAT_COUNT = 34;
+
+/** A reusable, instanced roller shutter. Its single transform is damped in
+ * place, so opening never allocates objects or recreates GPU resources. */
+function GarageGate({ open }) {
+  const shutter = React.useRef(null);
+  const slats = React.useRef(null);
+  const openRef = React.useRef(open);
+  const slat = React.useMemo(() => new Object3D(), []);
+  openRef.current = open;
+
+  React.useLayoutEffect(() => {
+    if (!slats.current) return;
+    for (let i = 0; i < GATE_SLAT_COUNT; i++) {
+      slat.position.set(0, 0.12 + i * 0.12, 0);
+      slat.updateMatrix();
+      slats.current.setMatrixAt(i, slat.matrix);
+    }
+    slats.current.instanceMatrix.needsUpdate = true;
+    slats.current.computeBoundingSphere();
+  }, [slat]);
+
+  // Negative priority keeps R3F's automatic render pass enabled. Positive
+  // render priorities take over drawing and would leave the canvas black unless
+  // this callback manually called gl.render().
+  useFrame((state, delta) => {
+    if (!shutter.current || document.hidden) return;
+    const target = openRef.current ? GATE_OPEN_TRAVEL : 0;
+    const current = shutter.current.position.y;
+    const next = MathUtils.damp(current, target, 5.4, Math.min(delta, 0.05));
+    if (Math.abs(target - next) < 0.002) {
+      shutter.current.position.y = target;
+      return;
+    }
+    shutter.current.position.y = next;
+    state.invalidate();
+  }, -1);
+
+  return (
+    <group name="Motorized_Garage_Roller_Door" position={[0, 0, HALL_WIDTH - 0.06]} rotation={[0, Math.PI, 0]}>
+      {/* Fixed guides and roller housing */}
+      <mesh position={[-4.28, 2.12, 0]} raycast={() => null}>
+        <boxGeometry args={[0.14, 4.24, 0.2]} />
+        <meshStandardMaterial color="#292d34" metalness={0.82} roughness={0.3} />
+      </mesh>
+      <mesh position={[4.28, 2.12, 0]} raycast={() => null}>
+        <boxGeometry args={[0.14, 4.24, 0.2]} />
+        <meshStandardMaterial color="#292d34" metalness={0.82} roughness={0.3} />
+      </mesh>
+      <mesh position={[0, 4.3, 0]} raycast={() => null}>
+        <boxGeometry args={[8.65, 0.28, 0.34]} />
+        <meshStandardMaterial color="#171a20" metalness={0.78} roughness={0.34} />
+      </mesh>
+      <mesh position={[0, 4.14, 0.19]} raycast={() => null}>
+        <boxGeometry args={[8.1, 0.025, 0.025]} />
+        <meshBasicMaterial color="#DC1A22" toneMapped={false} />
+      </mesh>
+      <group ref={shutter} position={[0, 0, 0.02]}>
+        <instancedMesh ref={slats} args={[undefined, undefined, GATE_SLAT_COUNT]} raycast={() => null}>
+          <boxGeometry args={[8.35, 0.108, 0.13]} />
+          <meshStandardMaterial color="#636a73" metalness={0.82} roughness={0.28} />
+        </instancedMesh>
+      </group>
+    </group>
+  );
+}
+
+function ExteriorApron() {
+  return (
+    <group name="Circuit_Outside_Garage">
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.025, HALL_WIDTH + 13]} raycast={() => null}>
+        <planeGeometry args={[26, 26]} />
+        <meshStandardMaterial color="#171a20" roughness={0.92} metalness={0.08} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.012, HALL_WIDTH + 13]} raycast={() => null}>
+        <planeGeometry args={[7.4, 26]} />
+        <meshStandardMaterial color="#101318" roughness={0.88} metalness={0.12} />
+      </mesh>
+      {[-3.55, 3.55].map((x) => (
+        <mesh key={x} position={[x, 0.005, HALL_WIDTH + 13]} raycast={() => null}>
+          <boxGeometry args={[0.035, 0.008, 25]} />
+          <meshBasicMaterial color="#B5B9C0" />
+        </mesh>
+      ))}
+      {Array.from({ length: 7 }, (_, index) => (
+        <mesh key={index} position={[0, 0.006, HALL_WIDTH + 2.5 + index * 3.1]} raycast={() => null}>
+          <boxGeometry args={[0.12, 0.008, 1.55]} />
+          <meshBasicMaterial color="#D7D9DE" />
+        </mesh>
+      ))}
+      <mesh
+        position={[0, 5.2, HALL_WIDTH + 26]}
+        rotation={[0, Math.PI, 0]}
+        raycast={() => null}
+      >
+        <planeGeometry args={[26, 10]} />
+        <meshBasicMaterial color="#141923" fog />
+      </mesh>
+    </group>
+  );
+}
 
 export const AeroStreamlines = ({ highDownforce: Q }) => {
   const rig = React.useRef(null);
@@ -146,7 +251,7 @@ export const AeroStreamlines = ({ highDownforce: Q }) => {
   );
 };
 
-export const GarageFloorAndLift = ({ theme: Q, isSoftwareWebGL: A, active: I }) => {
+export const GarageFloorAndLift = ({ theme: Q, isSoftwareWebGL: A, active: I, garageLightsOn = true }) => {
   const C = React.useMemo(() => makeFloorTextures(), []),
     E = React.useRef(null);
   return (
@@ -280,15 +385,20 @@ export const GarageFloorAndLift = ({ theme: Q, isSoftwareWebGL: A, active: I }) 
           distance={4}
           decay={2}
           color={Q.rimColor}
+          visible={garageLightsOn}
         />
       </group>
     )
   );
 };
 
-const StudioEnvironment = React.memo(function StudioEnvironment({ theme: Q, software: e }) {
+const StudioEnvironment = React.memo(function StudioEnvironment({ theme: Q, software: e, lightsOn }) {
   return (
-    <Environment resolution={e ? 64 : 256} frames={1} environmentIntensity={Q.envIntensity}>
+    <Environment
+      resolution={e ? 64 : 256}
+      frames={1}
+      environmentIntensity={Q.envIntensity * (lightsOn ? 1 : 0.16)}
+    >
       <color attach="background" args={["#050608"]} />
       <Lightformer
         form="rect"
@@ -351,7 +461,14 @@ const StudioEnvironment = React.memo(function StudioEnvironment({ theme: Q, soft
 });
 
 export const Showroom = React.memo(
-  ({ theme: Q, showAeroStreamlines: A, highDownforceGurney: g, rollingRoad: I }) => {
+  ({
+    theme: Q,
+    showAeroStreamlines: A,
+    highDownforceGurney: g,
+    rollingRoad: I,
+    garageGateOpen = false,
+    garageLightsOn = true,
+  }) => {
     const E = useThree((M) => M.gl),
       e = React.useMemo(() => {
         try {
@@ -394,14 +511,35 @@ export const Showroom = React.memo(
         <color attach="background" args={[Q.bgHex]} />
         <fog attach="fog" args={[Q.fogHex, 22, 55]} />
         <group name="Maranello_Architectural_Showroom">
-          <StudioEnvironment theme={Q} software={e} />
-          <ambientLight intensity={0.26} color={Q.fillColor} />
-          <hemisphereLight args={[Q.keyColor, "#08090c", 0.38]} />
+          <StudioEnvironment theme={Q} software={e} lightsOn={garageLightsOn} />
+          {/* The three studio keys follow the Garage Lights switch. A restrained
+              ambient fill stays on in dark mode so the car remains readable. */}
+          <ambientLight intensity={garageLightsOn ? 0.52 : 0.18} color={Q.fillColor} />
+          <hemisphereLight args={[Q.keyColor, "#08090c", garageLightsOn ? 0.72 : 0.24]} />
+          <directionalLight
+            position={[-3.4, 7.2, -3.2]}
+            intensity={e ? 2.15 : 2.55}
+            color={Q.keyColor}
+            visible={garageLightsOn}
+          />
+          <directionalLight
+            position={[4.2, 4.6, 2.8]}
+            intensity={1.25}
+            color={Q.fillColor}
+            visible={garageLightsOn}
+          />
+          <directionalLight
+            position={[0, 3.4, -5.5]}
+            intensity={0.95}
+            color={Q.rimColor}
+            visible={garageLightsOn}
+          />
           {e ? (
             <directionalLight
               position={[-3.4, 7.2, -3.2]}
               intensity={Q.keyIntensity * 0.95}
               color={Q.keyColor}
+              visible={false}
             />
           ) : (
             <>
@@ -413,6 +551,7 @@ export const Showroom = React.memo(
                 distance={20}
                 decay={1.45}
                 color={Q.keyColor}
+                visible={false}
                 castShadow={!0}
                 shadow-mapSize-width={1024}
                 shadow-mapSize-height={1024}
@@ -426,6 +565,7 @@ export const Showroom = React.memo(
                 distance={19}
                 decay={1.45}
                 color={Q.rimColor}
+                visible={false}
               />
               <spotLight
                 position={[0, 4.2, 1.15]}
@@ -435,14 +575,17 @@ export const Showroom = React.memo(
                 distance={9}
                 decay={1.4}
                 color="#FFF5EA"
+                visible={false}
               />
-              <pointLight position={[-2.6, 0.55, -1.15]} intensity={2.4} distance={5.5} color={Q.keyColor} />
-              <pointLight position={[2.6, 0.55, -1.15]} intensity={2.4} distance={5.5} color={Q.keyColor} />
-              <pointLight position={[-2.6, 0.55, 1.5]} intensity={2.2} distance={5.5} color={Q.rimColor} />
-              <pointLight position={[2.6, 0.55, 1.5]} intensity={2.2} distance={5.5} color={Q.rimColor} />
             </>
           )}
-          <GarageFloorAndLift theme={Q} isSoftwareWebGL={e} active={I} />
+          {/* Low-mounted practicals preserve the bright floor accents without
+              reintroducing the harsh ceiling beams. */}
+          <pointLight position={[-2.6, 0.55, -1.15]} intensity={1.5} distance={5.5} color={Q.keyColor} visible={garageLightsOn} />
+          <pointLight position={[2.6, 0.55, -1.15]} intensity={1.5} distance={5.5} color={Q.keyColor} visible={garageLightsOn} />
+          <pointLight position={[-2.6, 0.55, 1.5]} intensity={1.3} distance={5.5} color={Q.rimColor} visible={garageLightsOn} />
+          <pointLight position={[2.6, 0.55, 1.5]} intensity={1.3} distance={5.5} color={Q.rimColor} visible={garageLightsOn} />
+          <GarageFloorAndLift theme={Q} isSoftwareWebGL={e} active={I} garageLightsOn={garageLightsOn} />
           <group position={[0, 4.85, 0]}>
             <mesh raycast={() => null}>
               <boxGeometry args={[2.65, 0.09, 6.6]} />
@@ -462,17 +605,38 @@ export const Showroom = React.memo(
             </mesh>
           </group>
           <group name="Garage_Shell">
-            <mesh position={[0, HALL_HEIGHT / 2, HALL_WIDTH]} rotation={[0, Math.PI, 0]} raycast={() => null}>
-              <planeGeometry args={[HALL_LENGTH * 2, HALL_HEIGHT]} />
+            {/* Split the front wall around a real doorway, leaving the rest of the shell intact. */}
+            {[-1, 1].map((side) => (
+              <mesh
+                key={`front-wall-${side}`}
+                position={[side * ((HALL_LENGTH + 4.2) / 2), HALL_HEIGHT / 2, HALL_WIDTH]}
+                rotation={[0, Math.PI, 0]}
+                raycast={() => null}
+              >
+                <planeGeometry args={[HALL_LENGTH - 4.2, HALL_HEIGHT]} />
+                <meshStandardMaterial
+                  map={o.long}
+                  emissiveMap={o.long}
+                  emissive="#ffffff"
+                  emissiveIntensity={0.22}
+                  roughness={0.92}
+                  metalness={0.05}
+                />
+              </mesh>
+            ))}
+            <mesh position={[0, 4.9, HALL_WIDTH]} rotation={[0, Math.PI, 0]} raycast={() => null}>
+              <planeGeometry args={[8.4, 1.4]} />
               <meshStandardMaterial
                 map={o.long}
                 emissiveMap={o.long}
                 emissive="#ffffff"
-                emissiveIntensity={0.28}
+                emissiveIntensity={0.22}
                 roughness={0.92}
                 metalness={0.05}
               />
             </mesh>
+            <GarageGate open={garageGateOpen} />
+            <ExteriorApron />
             <mesh position={[0, HALL_HEIGHT / 2, -HALL_WIDTH]} raycast={() => null}>
               <planeGeometry args={[HALL_LENGTH * 2, HALL_HEIGHT]} />
               <meshStandardMaterial
@@ -518,7 +682,7 @@ export const Showroom = React.memo(
               <planeGeometry args={[HALL_LENGTH * 2, HALL_WIDTH * 2]} />
               <meshStandardMaterial color="#0b0c10" roughness={0.95} metalness={0.1} />
             </mesh>
-            <CeilingFixtures positions={l} color={Q.keyColor} />
+            <CeilingFixtures positions={l} color={Q.keyColor} active={false} />
             {[-6.6, 0, 6.6].map((M) => (
               <mesh key={M} position={[0, HALL_HEIGHT - 0.18, M]} raycast={() => null}>
                 <boxGeometry args={[HALL_LENGTH * 2, 0.36, 0.22]} />

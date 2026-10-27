@@ -5,12 +5,14 @@ import { classifyMesh } from "@/lib/gltf";
 import { liftTimeline } from "@/three/liftTimeline";
 import { raceDrive } from "@/three/raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
+import { getNeonPalette } from "./neonColor";
 import { drawDashboardDisplay, makeStudioTextures } from "@/three/textures";
 import { Html } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import React from "react";
 import { clone as cloneScene } from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
+  AdditiveBlending,
   Box3,
   CanvasTexture,
   Color,
@@ -41,6 +43,116 @@ import {
 // that is already at identity fails the `angleTo` test and is skipped.
 // ---------------------------------------------------------------------------
 const DOOR_CLOSED = new Quaternion();
+
+/** Paint-matched underbody pools and cool cabin practicals.
+ * Light objects stay mounted; toggling only flips their visibility. */
+export function NeonLighting({ enabled, bodyColor }) {
+  const lights = React.useMemo(() => Array.from({ length: 6 }, () => React.createRef()), []);
+  const materials = React.useMemo(() => Array.from({ length: 2 }, () => React.createRef()), []);
+  const palette = React.useMemo(() => getNeonPalette(bodyColor), [bodyColor]);
+  const glowTexture = React.useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext("2d");
+    if (context) {
+      const glow = context.createRadialGradient(64, 64, 3, 64, 64, 64);
+      glow.addColorStop(0, "rgba(255,255,255,0.9)");
+      glow.addColorStop(0.22, "rgba(255,255,255,0.66)");
+      glow.addColorStop(0.55, "rgba(255,255,255,0.2)");
+      glow.addColorStop(1, "rgba(255,255,255,0)");
+      context.fillStyle = glow;
+      context.fillRect(0, 0, 128, 128);
+    }
+    const texture = new CanvasTexture(canvas);
+    texture.colorSpace = SRGBColorSpace;
+    return texture;
+  }, []);
+
+  React.useEffect(() => () => glowTexture.dispose(), [glowTexture]);
+
+  React.useLayoutEffect(() => {
+    lights.forEach((ref, index) => {
+      const light = ref.current;
+      if (!light) return;
+      light.visible = enabled;
+      light.color.set(index < 4 ? palette.underglow : palette.interior);
+    });
+    materials.forEach((ref) => {
+      if (ref.current) ref.current.color.set(palette.underglow);
+    });
+  }, [enabled, lights, materials, palette]);
+
+  return (
+    <group name="Paint_Matched_Neon_Underglow_And_Cockpit_Ambience">
+      <pointLight ref={lights[0]} position={[-0.72, 0.13, -1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[1]} position={[0.72, 0.13, -1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[2]} position={[-0.72, 0.13, 1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[3]} position={[0.72, 0.13, 1.15]} intensity={7.5} distance={3.8} decay={2} color="#FF2BC7" />
+      <pointLight ref={lights[4]} position={[-0.3, 0.84, -0.35]} intensity={5.2} distance={1.9} decay={2} color="#A77BFF" />
+      <pointLight ref={lights[5]} position={[0.3, 0.84, -0.35]} intensity={5.2} distance={1.9} decay={2} color="#A77BFF" />
+      <mesh
+        position={[0, 0.014, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        scale={[1.3, 2.3, 1]}
+        visible={enabled}
+        raycast={() => null}
+      >
+        <circleGeometry args={[1, 48]} />
+        <meshBasicMaterial
+          ref={materials[0]}
+          map={glowTexture}
+          color="#C000FF"
+          transparent
+          opacity={0.92}
+          blending={AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh
+        position={[0, 0.016, 0]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        scale={[0.88, 1.92, 1]}
+        visible={enabled}
+        raycast={() => null}
+      >
+        <circleGeometry args={[1, 48]} />
+        <meshBasicMaterial
+          ref={materials[1]}
+          map={glowTexture}
+          color="#F04BFF"
+          transparent
+          opacity={0.68}
+          blending={AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      {[-0.76, 0.76].map((side) => (
+        <mesh
+          key={side}
+          position={[side, 0.012, 0]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          scale={[0.62, 1.78, 1]}
+          visible={enabled}
+          raycast={() => null}
+        >
+          <circleGeometry args={[1, 48]} />
+          <meshBasicMaterial
+            map={glowTexture}
+            color={palette.underglow}
+            transparent
+            opacity={0.76}
+            blending={AdditiveBlending}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
 
 /**
  * Real headlight beams.
@@ -129,6 +241,7 @@ export const VehicleModel = React.memo(
     technicalView: u,
     powerMode: K,
     showHotspotPins: U,
+    neonLightsOn = false,
   }) => {
     const p = React.useMemo(() => makeStudioTextures(), []),
       G = React.useRef({
@@ -898,6 +1011,7 @@ export const VehicleModel = React.memo(
               />
             </mesh>
           )}
+          <NeonLighting enabled={neonLightsOn} bodyColor={e} />
           <HeadlightBeams on={h} brake={V} />
           <primitive
             object={L.root}

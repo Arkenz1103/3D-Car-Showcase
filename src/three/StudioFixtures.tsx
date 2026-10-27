@@ -25,10 +25,11 @@ export const DrainSlats = memo(function DrainSlats() {
 interface CeilingFixturesProps {
   positions: [number, number, number][];
   color: string;
+  active?: boolean;
 }
 
 // Identical fixtures share geometry and material without losing any detail.
-export const CeilingFixtures = memo(function CeilingFixtures({ positions, color }: CeilingFixturesProps) {
+export const CeilingFixtures = memo(function CeilingFixtures({ positions, color, active = false }: CeilingFixturesProps) {
   const lamps = useRef<InstancedMesh>(null);
   const cases = useRef<InstancedMesh>(null);
   useLayoutEffect(() => {
@@ -48,7 +49,12 @@ export const CeilingFixtures = memo(function CeilingFixtures({ positions, color 
 
   return (
     <>
-      <instancedMesh ref={lamps} args={[undefined, undefined, positions.length]} raycast={() => null}>
+      <instancedMesh
+        ref={lamps}
+        args={[undefined, undefined, positions.length]}
+        raycast={() => null}
+        visible={active}
+      >
         <planeGeometry args={[1, 2.6]} />
         <meshBasicMaterial color={color} />
       </instancedMesh>

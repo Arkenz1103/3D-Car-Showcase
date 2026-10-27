@@ -24,6 +24,37 @@ function loadModule(path) {
 
 const { LiftTimeline, LIFT_TIMING } = loadModule("src/three/liftTimeline.ts");
 const { orientCameraGoal, responsiveCameraGoal } = loadModule("src/three/cameraFraming.ts");
+const { getNeonPalette } = loadModule("src/three/neonColor.ts");
+const showroomSource = fs.readFileSync("src/three/Showroom.tsx", "utf8");
+const garageGateSource = showroomSource.match(/function GarageGate\([\s\S]*?\n}\n\nfunction ExteriorApron/);
+assert(garageGateSource, "The motorized garage gate component must exist");
+const gateFrame = garageGateSource[0].match(/useFrame\([\s\S]*?\n\s*},\s*(-?\d+)?\);/);
+assert(gateFrame, "The garage gate animation must use a frame callback");
+assert(
+  gateFrame[1] === undefined || Number(gateFrame[1]) <= 0,
+  "The garage gate must not take over R3F's automatic render loop (positive priority blanks the canvas)",
+);
+assert.equal(getNeonPalette("#CE1318").underglow, "#FF2BD6", "Red paint gets a hot-magenta neon palette");
+assert.equal(getNeonPalette("#CE1318").interior, "#B6A3FF", "Red paint gets cool violet cockpit lighting");
+assert.equal(getNeonPalette("#EAB60E").underglow, "#FFB52E", "Yellow paint gets an amber neon palette");
+assert.equal(getNeonPalette("#0E2D6D").underglow, "#27D8FF", "Blue paint gets an icy cyan neon palette");
+assert.equal(getNeonPalette("#F4F4F4").underglow, "#C83DFF", "Neutral paint gets ultraviolet neon");
+assert.notEqual(getNeonPalette("#45B879").underglow, "#45B879", "Custom paint gets a contrasting accent");
+const vehicleSource = fs.readFileSync("src/three/VehicleModel.tsx", "utf8");
+assert.match(vehicleSource, /intensity=\{7\.5\} distance=\{3\.8\}/, "Underglow point lights must be strong enough to read on the floor");
+assert.match(vehicleSource, /intensity=\{5\.2\} distance=\{1\.9\}/, "Cockpit lights must illuminate the interior");
+assert.match(vehicleSource, /position=\{\[0, 0\.014, 0\]\}/, "The underbody glow must sit close to the showroom floor");
+const appSource = fs.readFileSync("src/App.tsx", "utf8");
+assert.match(appSource, /React\.useState\("sf90"\)/, "The bundled SF90 must remain the default car");
+const gurneyToggle = appSource.match(/const toggleGurney = React\.useCallback\(\(\) => \{([\s\S]*?)\}, \[nA\]\);/);
+assert(gurneyToggle, "The gurney toggle must be shared by the garage and technical panels");
+assert.match(gurneyToggle[1], /rA\(enabled\)/, "The gurney toggle must update the flap state");
+assert.match(gurneyToggle[1], /og\(enabled\)/, "Turning the gurney off must also clear its linked flow lines");
+assert.match(showroomSource, /environmentIntensity=\{Q\.envIntensity \* \(lightsOn \? 1 : 0\.16\)\}/, "Garage dark mode must lower environment lighting");
+assert.match(showroomSource, /visible=\{garageLightsOn\}/, "Garage dark mode must toggle retained light objects");
+assert.match(appSource, /aria-label=\{garageLightsOn \? "Turn garage lights off" : "Turn garage lights on"\}/, "Garage lights need an accessible toggle");
+const catalogSource = fs.readFileSync("src/data/catalog.ts", "utf8");
+assert.match(catalogSource, /CARS\.find\([\s\S]*?\) \|\| CARS\[0\]/, "Unknown car IDs must fall back to the default model");
 const timeline = new LiftTimeline();
 const phases = new Set();
 timeline.begin(1);
@@ -97,5 +128,5 @@ assert.equal(
 );
 
 console.log(
-  "PASS: ascent-only entrances, full slow rotation, pause/replay, stale-load guards, responsive framing, and unresolved-name checks.",
+  "PASS: garage-light dimmer, gurney-linked flow lines, paint-matched neon, default-car fallback, render-loop safety, lift/camera continuity, responsive framing, and unresolved-name checks.",
 );
