@@ -111,18 +111,14 @@ export function RaceHud({
   onExit,
   lightsOn,
   bodyGlowOn,
-  interiorLightsOn,
   onToggleLights,
   onToggleBodyGlow,
-  onToggleInteriorLights,
 }: {
   onExit: () => void;
   lightsOn: boolean;
   bodyGlowOn: boolean;
-  interiorLightsOn: boolean;
   onToggleLights: () => void;
   onToggleBodyGlow: () => void;
-  onToggleInteriorLights: () => void;
 }) {
   const speedRef = React.useRef<HTMLSpanElement>(null);
   const gearRef = React.useRef<HTMLSpanElement>(null);
@@ -615,18 +611,6 @@ export function RaceHud({
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Body</span>
                 <kbd className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-zinc-300">B</kbd>
-              </button>
-              <button
-                type="button"
-                onClick={onToggleInteriorLights}
-                aria-pressed={interiorLightsOn}
-                aria-label={`Turn interior lights ${interiorLightsOn ? "off" : "on"}`}
-                title={`Cabin ambience ${interiorLightsOn ? "on" : "off"} · press I`}
-                className={`atelier-panel rounded-full px-2 py-1.5 flex items-center gap-1.5 font-mono-tech text-[9px] uppercase tracking-[0.1em] cursor-pointer transition-colors ${interiorLightsOn ? "text-[#A78BFA]" : "text-zinc-400 hover:text-white"}`}
-              >
-                <Lightbulb className="w-3.5 h-3.5" />
-                <span>Cabin</span>
-                <kbd className="rounded bg-white/10 px-1 py-0.5 text-[9px] text-zinc-300">I</kbd>
               </button>
             </div>
           </div>

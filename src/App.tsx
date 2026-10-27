@@ -116,7 +116,6 @@ export function App() {
     [raceMode, setRaceMode] = React.useState(!1),
     [raceLightsOn, setRaceLightsOn] = React.useState(false),
     [raceBodyGlowOn, setRaceBodyGlowOn] = React.useState(false),
-    [raceInteriorLightsOn, setRaceInteriorLightsOn] = React.useState(false),
     [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
     [raceSetupMap, setRaceSetupMap] = React.useState(raceSession.mapId),
     [raceSetupEnvironment, setRaceSetupEnvironment] = React.useState(raceSession.envIndex),
@@ -128,7 +127,6 @@ export function App() {
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
   const raceBodyGlowRef = React.useRef(false);
-  const raceInteriorLightsRef = React.useRef(false);
   React.useEffect(
     () => () => {
       if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
@@ -314,11 +312,6 @@ export function App() {
     raceBodyGlowRef.current = next;
     setRaceBodyGlowOn(next);
   }, []);
-  const toggleRaceInteriorLights = React.useCallback(() => {
-    const next = !raceInteriorLightsRef.current;
-    raceInteriorLightsRef.current = next;
-    setRaceInteriorLightsOn(next);
-  }, []);
   React.useEffect(() => {
     if (!raceMode) return;
     const onKeyDown = (event) => {
@@ -326,13 +319,12 @@ export function App() {
       if (event.target?.closest?.("input, textarea, select, [contenteditable=true]")) return;
       if (event.code === "KeyL") toggleRaceLights();
       else if (event.code === "KeyB") toggleRaceBodyGlow();
-      else if (event.code === "KeyI") toggleRaceInteriorLights();
       else return;
       event.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [raceMode, toggleRaceLights, toggleRaceBodyGlow, toggleRaceInteriorLights]);
+  }, [raceMode, toggleRaceLights, toggleRaceBodyGlow]);
   const beginRace = React.useCallback(() => {
     if (!I || o || openingGate) return;
     selectRaceTrack(raceSetupMap);
@@ -343,8 +335,6 @@ export function App() {
     setRaceLightsEnabled(automaticLights);
     raceBodyGlowRef.current = false;
     setRaceBodyGlowOn(false);
-    raceInteriorLightsRef.current = false;
-    setRaceInteriorLightsOn(false);
     lockRaceConditions(true);
     setRaceSetupOpen(false);
     // The Start Race click is the browser gesture needed to initialize audio.
@@ -371,8 +361,6 @@ export function App() {
     setRaceLightsEnabled(false);
     raceBodyGlowRef.current = false;
     setRaceBodyGlowOn(false);
-    raceInteriorLightsRef.current = false;
-    setRaceInteriorLightsOn(false);
     // No entrance replay: the timeline stays parked where it was.
     liftTimeline.pauseShowcase();
     // Tear the graph down so nothing keeps running (or holding the audio
@@ -505,9 +493,9 @@ export function App() {
           <RaceVehicleRig>
             <VehicleModel
               asset={I}
-              selectedComponent={V}
+              selectedComponent={raceMode ? null : V}
               entranceSeq={E}
-              onSelectComponent={Eg}
+              onSelectComponent={raceMode ? null : Eg}
               onHoverTelemetry={j}
               onMeshInventoryReady={K}
               paintHex={m}
@@ -524,7 +512,7 @@ export function App() {
               technicalView={BA}
               powerMode={WA}
               bodyGlowOn={raceMode ? raceBodyGlowOn : neonLightsOn}
-              interiorLightsOn={raceMode ? raceInteriorLightsOn : neonLightsOn}
+              interiorLightsOn={!raceMode && neonLightsOn}
               showHotspotPins={Wg && !zg && !G.interior && !raceMode}
             />
           </RaceVehicleRig>
@@ -558,10 +546,8 @@ export function App() {
           onExit={exitRace}
           lightsOn={raceLightsOn}
           bodyGlowOn={raceBodyGlowOn}
-          interiorLightsOn={raceInteriorLightsOn}
           onToggleLights={toggleRaceLights}
           onToggleBodyGlow={toggleRaceBodyGlow}
-          onToggleInteriorLights={toggleRaceInteriorLights}
         />
       )}
       {o && !I && (

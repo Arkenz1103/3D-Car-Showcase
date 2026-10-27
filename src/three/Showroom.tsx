@@ -381,11 +381,10 @@ export const GarageFloorAndLift = ({ theme: Q, isSoftwareWebGL: A, active: I, ga
         </group>
         <pointLight
           position={[0, -0.35, 0]}
-          intensity={I ? 2.4 : 1.4}
+          intensity={garageLightsOn ? (I ? 2.4 : 1.4) : 0}
           distance={4}
           decay={2}
           color={Q.rimColor}
-          visible={garageLightsOn}
         />
       </group>
     )
@@ -518,21 +517,18 @@ export const Showroom = React.memo(
           <hemisphereLight args={[Q.keyColor, "#08090c", garageLightsOn ? 0.72 : 0.24]} />
           <directionalLight
             position={[-3.4, 7.2, -3.2]}
-            intensity={e ? 2.15 : 2.55}
+            intensity={garageLightsOn ? (e ? 2.15 : 2.55) : 0}
             color={Q.keyColor}
-            visible={garageLightsOn}
           />
           <directionalLight
             position={[4.2, 4.6, 2.8]}
-            intensity={1.25}
+            intensity={garageLightsOn ? 1.25 : 0}
             color={Q.fillColor}
-            visible={garageLightsOn}
           />
           <directionalLight
             position={[0, 3.4, -5.5]}
-            intensity={0.95}
+            intensity={garageLightsOn ? 0.95 : 0}
             color={Q.rimColor}
-            visible={garageLightsOn}
           />
           {e ? (
             <directionalLight
@@ -581,10 +577,10 @@ export const Showroom = React.memo(
           )}
           {/* Low-mounted practicals preserve the bright floor accents without
               reintroducing the harsh ceiling beams. */}
-          <pointLight position={[-2.6, 0.55, -1.15]} intensity={1.5} distance={5.5} color={Q.keyColor} visible={garageLightsOn} />
-          <pointLight position={[2.6, 0.55, -1.15]} intensity={1.5} distance={5.5} color={Q.keyColor} visible={garageLightsOn} />
-          <pointLight position={[-2.6, 0.55, 1.5]} intensity={1.3} distance={5.5} color={Q.rimColor} visible={garageLightsOn} />
-          <pointLight position={[2.6, 0.55, 1.5]} intensity={1.3} distance={5.5} color={Q.rimColor} visible={garageLightsOn} />
+          <pointLight position={[-2.6, 0.55, -1.15]} intensity={garageLightsOn ? 1.5 : 0} distance={5.5} color={Q.keyColor} />
+          <pointLight position={[2.6, 0.55, -1.15]} intensity={garageLightsOn ? 1.5 : 0} distance={5.5} color={Q.keyColor} />
+          <pointLight position={[-2.6, 0.55, 1.5]} intensity={garageLightsOn ? 1.3 : 0} distance={5.5} color={Q.rimColor} />
+          <pointLight position={[2.6, 0.55, 1.5]} intensity={garageLightsOn ? 1.3 : 0} distance={5.5} color={Q.rimColor} />
           <GarageFloorAndLift theme={Q} isSoftwareWebGL={e} active={I} garageLightsOn={garageLightsOn} />
           <group position={[0, 4.85, 0]}>
             <mesh raycast={() => null}>
