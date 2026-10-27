@@ -3,7 +3,7 @@ import BUNDLED_PNG_URL from "@/assets/textures/bundled";
 import { COMPONENT_IDS, COMPONENT_SPECS, HOTSPOT_IDS } from "@/data/catalog";
 import { classifyMesh } from "@/lib/gltf";
 import { liftTimeline } from "@/three/liftTimeline";
-import { raceDrive } from "@/three/raceEngine";
+import { raceDrive, raceInput } from "@/three/raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
 import { getNeonPalette } from "./neonColor";
 import { drawDashboardDisplay, makeStudioTextures } from "@/three/textures";
@@ -43,10 +43,11 @@ import {
 // that is already at identity fails the `angleTo` test and is skipped.
 // ---------------------------------------------------------------------------
 const DOOR_CLOSED = new Quaternion();
+const STEERING_AXIS_Z = new Vector3(0, 0, 1);
 
 /** Paint-matched underbody pools and cool cabin practicals.
  * Light objects stay mounted; toggling only flips their visibility. */
-export function NeonLighting({ enabled, bodyColor }) {
+export function NeonLighting({ bodyEnabled, interiorEnabled, bodyColor }) {
   const lights = React.useMemo(() => Array.from({ length: 6 }, () => React.createRef()), []);
   const materials = React.useMemo(() => Array.from({ length: 2 }, () => React.createRef()), []);
   const palette = React.useMemo(() => getNeonPalette(bodyColor), [bodyColor]);
@@ -75,13 +76,13 @@ export function NeonLighting({ enabled, bodyColor }) {
     lights.forEach((ref, index) => {
       const light = ref.current;
       if (!light) return;
-      light.visible = enabled;
+      light.visible = index < 4 ? bodyEnabled : interiorEnabled;
       light.color.set(index < 4 ? palette.underglow : palette.interior);
     });
     materials.forEach((ref) => {
       if (ref.current) ref.current.color.set(palette.underglow);
     });
-  }, [enabled, lights, materials, palette]);
+  }, [bodyEnabled, interiorEnabled, lights, materials, palette]);
 
   return (
     <group name="Paint_Matched_Neon_Underglow_And_Cockpit_Ambience">
@@ -95,7 +96,7 @@ export function NeonLighting({ enabled, bodyColor }) {
         position={[0, 0.014, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
         scale={[1.3, 2.3, 1]}
-        visible={enabled}
+        visible={bodyEnabled}
         raycast={() => null}
       >
         <circleGeometry args={[1, 48]} />
@@ -114,7 +115,7 @@ export function NeonLighting({ enabled, bodyColor }) {
         position={[0, 0.016, 0]}
         rotation={[-Math.PI / 2, 0, 0]}
         scale={[0.88, 1.92, 1]}
-        visible={enabled}
+        visible={bodyEnabled}
         raycast={() => null}
       >
         <circleGeometry args={[1, 48]} />
@@ -135,7 +136,7 @@ export function NeonLighting({ enabled, bodyColor }) {
           position={[side, 0.012, 0]}
           rotation={[-Math.PI / 2, 0, 0]}
           scale={[0.62, 1.78, 1]}
-          visible={enabled}
+          visible={bodyEnabled}
           raycast={() => null}
         >
           <circleGeometry args={[1, 48]} />
@@ -171,6 +172,7 @@ const HEADLIGHT_LOW_BEAM = 340;
 
 export const HeadlightBeams = ({ on, brake }) => {
   const invalidate = useThree((state) => state.invalidate);
+  const brakeGlow = React.useRef(null);
   const units = React.useMemo(
     () =>
       [-1, 1].map((side) => {
@@ -193,6 +195,15 @@ export const HeadlightBeams = ({ on, brake }) => {
 
   React.useEffect(() => () => units.forEach(({ spot }) => spot.dispose()), [units]);
 
+  useFrame(() => {
+    const lamp = brakeGlow.current;
+    if (!lamp) return;
+    const braking = raceDrive.active
+      ? raceDrive.braking || raceDrive.handbraking || raceInput.brake > 0
+      : brake;
+    lamp.intensity = braking ? 5.5 : 0;
+  });
+
   return (
     <group name="Matrix_LED_Beams">
       {units.map((unit, i) => (
@@ -209,8 +220,9 @@ export const HeadlightBeams = ({ on, brake }) => {
         color="#DCEEFF"
       />
       <pointLight
+        ref={brakeGlow}
         position={[0, 0.74, 2.32]}
-        intensity={brake ? 5.5 : on ? 1.8 : 0}
+        intensity={0}
         distance={3.6}
         decay={2}
         color="#FF1A22"
@@ -241,7 +253,8 @@ export const VehicleModel = React.memo(
     technicalView: u,
     powerMode: K,
     showHotspotPins: U,
-    neonLightsOn = false,
+    bodyGlowOn = false,
+    interiorLightsOn = false,
   }) => {
     const p = React.useMemo(() => makeStudioTextures(), []),
       G = React.useRef({
@@ -284,6 +297,8 @@ export const VehicleModel = React.memo(
         const BA = new CanvasTexture(m);
         return ((BA.colorSpace = SRGBColorSpace), (BA.flipY = !1), (BA.needsUpdate = !0), BA);
       }, [m]);
+    const steeringWheelRotation = React.useMemo(() => new Quaternion(), []);
+    const steeringWheelAngle = React.useRef(0);
     React.useEffect(() => {
       (drawDashboardDisplay(m, K, y ? 250 : 0), (X.needsUpdate = !0));
     }, [m, X, K, y]);
@@ -703,11 +718,18 @@ export const VehicleModel = React.memo(
           wheelSpinNodes: hA,
           frontSteerNodes: vA,
           steeringWheelGroup: HA,
+          steeringWheelBaseQuaternion: HA ? HA.quaternion.clone() : null,
           gurneyFlapNode: lg,
           doorNodes,
         }
       );
     }, [Q, p, X]);
+    React.useLayoutEffect(() => {
+      steeringWheelAngle.current = 0;
+      if (L.steeringWheelGroup && L.steeringWheelBaseQuaternion) {
+        L.steeringWheelGroup.quaternion.copy(L.steeringWheelBaseQuaternion);
+      }
+    }, [L]);
     (React.useEffect(() => {
       E(L.inventory);
     }, [L.inventory, E]),
@@ -897,10 +919,12 @@ export const VehicleModel = React.memo(
       for (const rA of L.frontSteerNodes)
         ((rA.rotation.y = MathUtils.damp(rA.rotation.y, nA, 10, WA)),
           Math.abs(rA.rotation.y - nA) > 0.001 && (JA = !0));
-      if (L.steeringWheelGroup) {
-        const rA = -nA * 7.5;
-        L.steeringWheelGroup.rotation.z = MathUtils.damp(L.steeringWheelGroup.rotation.z, rA, 10, WA);
-        if (Math.abs(L.steeringWheelGroup.rotation.z - rA) > 0.001) JA = true;
+      if (L.steeringWheelGroup && L.steeringWheelBaseQuaternion) {
+        const rA = nA * 7.5;
+        steeringWheelAngle.current = MathUtils.damp(steeringWheelAngle.current, rA, 10, WA);
+        steeringWheelRotation.setFromAxisAngle(STEERING_AXIS_Z, steeringWheelAngle.current);
+        L.steeringWheelGroup.quaternion.copy(steeringWheelRotation).multiply(L.steeringWheelBaseQuaternion);
+        if (Math.abs(steeringWheelAngle.current - rA) > 0.001) JA = true;
       }
       for (const rA of L.wheelSpinNodes)
         (/fl|fr/i.test(rA.name) &&
@@ -921,16 +945,13 @@ export const VehicleModel = React.memo(
       }
       // Brake lights flare straight from the simulation — no React round trip.
       if (racing && L.taillightEmissiveMats.length) {
+        const brakeOrDrift = raceDrive.braking || raceDrive.handbraking || raceInput.brake > 0;
         for (const rA of L.taillightEmissiveMats)
-          rA.emissiveIntensity = raceDrive.braking
+          rA.emissiveIntensity = brakeOrDrift
             ? rA.name.includes("Lens")
               ? 1.85
               : 3.8
-            : h
-              ? rA.name.includes("Lens")
-                ? 0.65
-                : 1.45
-              : 0;
+            : 0;
       }
       if (JA) {
         markShadowsDirty();
@@ -1011,7 +1032,7 @@ export const VehicleModel = React.memo(
               />
             </mesh>
           )}
-          <NeonLighting enabled={neonLightsOn} bodyColor={e} />
+          <NeonLighting bodyEnabled={bodyGlowOn} interiorEnabled={interiorLightsOn} bodyColor={e} />
           <HeadlightBeams on={h} brake={V} />
           <primitive
             object={L.root}

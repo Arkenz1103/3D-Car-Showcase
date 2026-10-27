@@ -2,16 +2,16 @@
 /**
  * Circuit definition + static geometry builders for the street racing mode.
  *
- * Everything in this module is authored ONCE (module load / mount time) and
- * stored in flat `Float32Array` tables. The hot path in <RaceDirector/> only
- * reads those tables, so no `Vector3` / `Matrix4` is ever allocated inside a
- * `useFrame` callback.
+ * The selected centerline is baked at setup time into a flat `Float32Array`;
+ * race-frame physics only reads that table, so no `Vector3` / `Matrix4` is
+ * allocated inside a `useFrame` callback.
  *
  * Axis conventions match the rest of the project: `+Y` is up and the vehicle
  * model faces `-Z` in its local space, so a transform with `rotation.y = yaw`
  * drives a "forward" vector of `(-sin(yaw), 0, -cos(yaw))`.
  */
 import { BufferGeometry, CatmullRomCurve3, Float32BufferAttribute, Matrix4, Quaternion, Vector3 } from "three";
+import { raceSession, setRaceMap as updateRaceMap, type RaceMapId } from "./raceSession";
 
 /** Asphalt width of the drivable ribbon (metres). */
 export const TRACK_WIDTH = 13.6;
@@ -35,58 +35,104 @@ const TZ = 5;
 const PD = 6;
 const STRIDE = 7;
 
-/**
- * Hand-authored street circuit: a long start/finish straight, two hairpins and
- * a set of linked sweepers. Elevation stays gentle (±4 m) so the arcade
- * vehicle model can treat the road as a moving ground plane.
- */
-const LAYOUT: [number, number, number][] = [
-  [-120, 0, -150],
-  [20, 0, -150],
-  [110, 2, -110],
-  [120, 4, -20],
-  [60, 3, 40],
-  [-20, 1.5, 30],
-  [-60, 0, 90],
-  [-140, -1.5, 70],
-  [-160, -2.5, -30],
-  [-100, -1, -90],
-];
+/** Track centerlines, authored as separate routes at similar racing scale. */
+const TRACK_LAYOUTS: Record<RaceMapId, [number, number, number][]> = {
+  maranello: [
+    [-120, 0, -150],
+    [20, 0, -150],
+    [110, 2, -110],
+    [120, 4, -20],
+    [60, 3, 40],
+    [-20, 1.5, 30],
+    [-60, 0, 90],
+    [-140, -1.5, 70],
+    [-160, -2.5, -30],
+    [-100, -1, -90],
+  ],
+  riviera: [
+    [-155, 0, -110],
+    [-60, 1, -160],
+    [45, 2, -155],
+    [135, 3, -95],
+    [155, 2, -10],
+    [95, 1, 55],
+    [15, 2, 35],
+    [-45, 3, 105],
+    [-135, 1, 115],
+    [-185, 0, 25],
+    [-145, 0, -65],
+  ],
+  alpine: [
+    [-150, -2, -130],
+    [-55, -1, -165],
+    [40, 1, -145],
+    [120, 4, -105],
+    [150, 5, -25],
+    [105, 3, 55],
+    [25, 1, 25],
+    [-25, -1, 105],
+    [-115, -4, 125],
+    [-185, -5, 55],
+    [-170, -3, -35],
+    [-115, -1, -95],
+  ],
+};
 
-const CURVE = new CatmullRomCurve3(
-  LAYOUT.map(([x, y, z]) => new Vector3(x, y, z)),
-  true,
-  "centripetal",
-  0.5,
-);
-
-const SPACED = CURVE.getSpacedPoints(SAMPLE_COUNT);
-
-export const TRACK_LENGTH = CURVE.getLength();
-export const SEGMENT_LENGTH = TRACK_LENGTH / SAMPLE_COUNT;
+export let TRACK_LENGTH = 0;
+export let SEGMENT_LENGTH = 0;
 
 /** Flat table: `[x, y, z, tangentX, tangentY, tangentZ, arcLength] * SAMPLE_COUNT`. */
 export const samples = new Float32Array(SAMPLE_COUNT * STRIDE);
+const CURVATURE = new Float32Array(SAMPLE_COUNT);
 
-for (let i = 0; i < SAMPLE_COUNT; i++) {
-  const a = SPACED[i];
-  const b = SPACED[i + 1];
-  let dx = b.x - a.x;
-  let dy = b.y - a.y;
-  let dz = b.z - a.z;
-  const length = Math.hypot(dx, dy, dz) || 1;
-  dx /= length;
-  dy /= length;
-  dz /= length;
-  const o = i * STRIDE;
-  samples[o + PX] = a.x;
-  samples[o + PY] = a.y;
-  samples[o + PZ] = a.z;
-  samples[o + TX] = dx;
-  samples[o + TY] = dy;
-  samples[o + TZ] = dz;
-  samples[o + PD] = i * SEGMENT_LENGTH;
+function rebuildTrackTable(mapId: RaceMapId) {
+  const curve = new CatmullRomCurve3(
+    TRACK_LAYOUTS[mapId].map(([x, y, z]) => new Vector3(x, y, z)),
+    true,
+    "centripetal",
+    0.5,
+  );
+  const spaced = curve.getSpacedPoints(SAMPLE_COUNT);
+  TRACK_LENGTH = curve.getLength();
+  SEGMENT_LENGTH = TRACK_LENGTH / SAMPLE_COUNT;
+
+  for (let i = 0; i < SAMPLE_COUNT; i++) {
+    const a = spaced[i];
+    const b = spaced[i + 1];
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let dz = b.z - a.z;
+    const length = Math.hypot(dx, dy, dz) || 1;
+    dx /= length;
+    dy /= length;
+    dz /= length;
+    const o = i * STRIDE;
+    samples[o + PX] = a.x;
+    samples[o + PY] = a.y;
+    samples[o + PZ] = a.z;
+    samples[o + TX] = dx;
+    samples[o + TY] = dy;
+    samples[o + TZ] = dz;
+    samples[o + PD] = i * SEGMENT_LENGTH;
+  }
+
+  for (let i = 0; i < SAMPLE_COUNT; i++) {
+    const a = i * STRIDE;
+    const b = ((i + 1) % SAMPLE_COUNT) * STRIDE;
+    const dot = samples[a + TX] * samples[b + TX] + samples[a + TZ] * samples[b + TZ];
+    CURVATURE[i] = Math.acos(Math.min(1, Math.max(-1, dot))) / SEGMENT_LENGTH;
+  }
 }
+
+/** Apply the selected route before the race scene and its physics are mounted. */
+export function selectRaceTrack(mapId: RaceMapId) {
+  if (!TRACK_LAYOUTS[mapId]) return false;
+  updateRaceMap(mapId);
+  rebuildTrackTable(mapId);
+  return true;
+}
+
+rebuildTrackTable(raceSession.mapId);
 
 /** Sample index (modulo) that hosts checkpoint `k`. Checkpoint 0 is start/finish. */
 export function checkpointSample(k: number) {
@@ -218,14 +264,6 @@ export function headingAt(index: number, blend = 0) {
   const fz = samples[a + TZ] + (samples[b + TZ] - samples[a + TZ]) * blend;
   // rotation.y = yaw maps the model's -Z axis onto (-sin, -cos).
   return Math.atan2(-fx, -fz);
-}
-
-const CURVATURE = new Float32Array(SAMPLE_COUNT);
-for (let i = 0; i < SAMPLE_COUNT; i++) {
-  const a = i * STRIDE;
-  const b = ((i + 1) % SAMPLE_COUNT) * STRIDE;
-  const dot = samples[a + TX] * samples[b + TX] + samples[a + TZ] * samples[b + TZ];
-  CURVATURE[i] = Math.acos(Math.min(1, Math.max(-1, dot))) / SEGMENT_LENGTH;
 }
 
 /** Turn rate (rad/m) of the circuit around a sample — drives kerb placement. */

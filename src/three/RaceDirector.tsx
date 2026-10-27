@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
  * Race driver: keyboard input, the fixed-step simulation tick, the chase camera
- * and the handful of dynamic race visuals (moving sun, nitro plumes).
+ * and the handful of dynamic race visuals (moving sun, turbo plumes and impact sparks).
  *
  * Everything here runs inside `useFrame`. No `Vector3` / `Quaternion` is ever
  * constructed in that loop — the scratch objects below are module level and are
@@ -9,22 +9,21 @@
  */
 import { useFrame, useThree } from "@react-three/fiber";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
-import { AdditiveBlending, DoubleSide, PlaneGeometry, Vector3 } from "three";
+import { AdditiveBlending, BufferAttribute, BufferGeometry, DoubleSide, PlaneGeometry, Vector3 } from "three";
 import { makePlumeTexture } from "./raceAssets";
 import {
   abortRace,
-  applyNitroImpulse,
+  activateTurbo,
   pauseRace,
   raceDrive,
   raceInput,
   racePhase,
-  recoverVehicle,
   startRaceSequence,
   stepRace,
 } from "./raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
-import { currentEnv, cycleCamera, cycleEnvironment, raceSession } from "./raceSession";
-import { triggerNitroBurst, updateAudio } from "./raceAudio";
+import { currentEnv, cycleCamera, raceSession } from "./raceSession";
+import { triggerTurboBurst, updateAudio } from "./raceAudio";
 
 /** Camera framing constants — one place to tune the whole race feel. */
 const CAM = { base: 8.5, height: 2.7, look: 10.5, fov: 62, follow: 8.4 };
@@ -53,16 +52,13 @@ const sunGoal = new Vector3();
 let appliedEnvIndex = -1;
 
 /** Held key state — booleans only, so the handlers never allocate. */
-const held = { forward: false, back: false, left: false, right: false, boost: false, handbrake: false };
-let boostLatch = false;
+const held = { forward: false, back: false, left: false, right: false, drift: false, handbrake: false };
 
 function releaseKeys() {
-  held.forward = held.back = held.left = held.right = held.boost = held.handbrake = false;
-  boostLatch = false;
+  held.forward = held.back = held.left = held.right = held.drift = held.handbrake = false;
   raceInput.throttle = 0;
   raceInput.brake = 0;
   raceInput.steer = 0;
-  raceInput.boost = false;
   raceInput.handbrake = false;
 }
 
@@ -229,6 +225,74 @@ export const NitroPlumes = memo(function NitroPlumes() {
   );
 });
 
+/** Short, allocation-free spark streaks at the car on a barrier impact. */
+export const RaceCrashSparks = memo(function RaceCrashSparks() {
+  const sparks = useRef<any>(null);
+  const age = useRef(1);
+  const previousFx = useRef(0);
+  const buffers = useMemo(() => {
+    const count = 18;
+    const origins = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    const positions = new Float32Array(count * 6);
+    for (let i = 0; i < count; i++) {
+      const angle = i * 2.399963;
+      const offset = i * 3;
+      origins[offset] = Math.sin(angle) * 0.7;
+      origins[offset + 1] = 0.12 + (i % 4) * 0.16;
+      origins[offset + 2] = Math.cos(angle) * 0.44;
+      velocities[offset] = Math.sin(angle) * (2.2 + (i % 4) * 0.55);
+      velocities[offset + 1] = 0.7 + (i % 5) * 0.24;
+      velocities[offset + 2] = Math.cos(angle) * (1.6 + (i % 3) * 0.5);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(positions, 3));
+    return { count, origins, velocities, geometry };
+  }, []);
+
+  useFrame((_, delta) => {
+    const node = sparks.current;
+    if (!node) return;
+    const fx = raceDrive.crashFx;
+    if (fx > previousFx.current + 0.08) age.current = 0;
+    else age.current = Math.min(1, age.current + delta);
+    previousFx.current = fx;
+
+    const active = raceDrive.active && fx > 0.05 && age.current < 0.34;
+    node.visible = active;
+    if (!active) return;
+    node.position.set(raceDrive.x, raceDrive.y + 0.48, raceDrive.z);
+    node.rotation.y = raceDrive.heading;
+    const t0 = age.current;
+    const t1 = t0 + 0.055;
+    const position = buffers.geometry.attributes.position.array as Float32Array;
+    for (let i = 0; i < buffers.count; i++) {
+      const offset = i * 3;
+      const out = i * 6;
+      const ox = buffers.origins[offset];
+      const oy = buffers.origins[offset + 1];
+      const oz = buffers.origins[offset + 2];
+      const vx = buffers.velocities[offset];
+      const vy = buffers.velocities[offset + 1];
+      const vz = buffers.velocities[offset + 2];
+      position[out] = ox + vx * t0;
+      position[out + 1] = oy + vy * t0 - 2.2 * t0 * t0;
+      position[out + 2] = oz + vz * t0;
+      position[out + 3] = ox + vx * t1;
+      position[out + 4] = oy + vy * t1 - 2.2 * t1 * t1;
+      position[out + 5] = oz + vz * t1;
+    }
+    buffers.geometry.attributes.position.needsUpdate = true;
+    node.material.opacity = Math.max(0, 1 - t0 / 0.34) * Math.min(1, fx * 1.7);
+  }, -1);
+
+  return (
+    <lineSegments ref={sparks} geometry={buffers.geometry} visible={false} frustumCulled={false} raycast={() => null}>
+      <lineBasicMaterial color="#ffd477" transparent opacity={0} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
+    </lineSegments>
+  );
+});
+
 /**
  * The race mode driver. Mounting it starts the standing start; unmounting it
  * pulls the car back off the circuit and restores the showroom camera planes.
@@ -286,26 +350,18 @@ export const RaceDirector = memo(function RaceDirector() {
           break;
         case "ShiftLeft":
         case "ShiftRight":
-          held.boost = true;
-          if (!boostLatch) {
-            boostLatch = true;
-            // Only fire the whoosh when the bottle actually had something in it.
-            if (applyNitroImpulse()) triggerNitroBurst();
-          }
+          held.drift = true;
           break;
         case "Space":
           held.handbrake = true;
           break;
+        case "KeyQ":
+          // One press fires a finite turbo burst; it cannot be held or spammed.
+          if (activateTurbo()) triggerTurboBurst();
+          break;
         case "KeyC":
           // Cycles chase -> hood -> cockpit without touching React.
           cycleCamera();
-          break;
-        case "KeyE":
-          // Day -> Night -> Rain; the circuit reads the preset in its own frame.
-          cycleEnvironment();
-          break;
-        case "KeyR":
-          recoverVehicle();
           break;
         case "Escape":
         case "KeyP":
@@ -337,8 +393,7 @@ export const RaceDirector = memo(function RaceDirector() {
           break;
         case "ShiftLeft":
         case "ShiftRight":
-          held.boost = false;
-          boostLatch = false;
+          held.drift = false;
           break;
         case "Space":
           held.handbrake = false;
@@ -366,8 +421,7 @@ export const RaceDirector = memo(function RaceDirector() {
     raceInput.throttle = held.forward ? 1 : 0;
     raceInput.brake = held.back ? 1 : 0;
     raceInput.steer = (held.left ? 1 : 0) - (held.right ? 1 : 0);
-    raceInput.boost = held.boost;
-    raceInput.handbrake = held.handbrake;
+    raceInput.handbrake = held.drift || held.handbrake;
 
     stepRace(delta);
 

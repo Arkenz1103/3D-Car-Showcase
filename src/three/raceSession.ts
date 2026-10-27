@@ -1,10 +1,9 @@
 // @ts-nocheck
 /**
- * Race session settings: the weather preset and the camera mount.
+ * Race session settings: selected track, weather preset and camera mount.
  *
- * Both are module level singletons read straight inside `useFrame`, so cycling
- * them never re-renders React or the canvas. The only React consumers are the
- * HUD buttons, which subscribe to the change events.
+ * These are module-level settings read by the circuit and race loop. HUD and
+ * setup consumers subscribe to changes instead of rebuilding simulation state.
  *
  * Performance contract for the presets below: they ONLY re-tune the four lights
  * that already exist (hemisphere + ambient + key + rim) plus the four pooled
@@ -119,6 +118,32 @@ export const ENVIRONMENTS: EnvPreset[] = [
   },
 ];
 
+export const RACE_MAPS = [
+  {
+    id: "maranello",
+    name: "Maranello Street Circuit",
+    region: "Maranello, Italy",
+    description: "A technical city loop with a long start straight and linked sweepers.",
+    style: "city",
+  },
+  {
+    id: "riviera",
+    name: "Riviera Coast Run",
+    region: "French Riviera",
+    description: "Fast seaside bends, a tight harbor hairpin, and rolling coastal elevation.",
+    style: "coast",
+  },
+  {
+    id: "alpine",
+    name: "Alpine Pass",
+    region: "Dolomites, Italy",
+    description: "A compact mountain route with sharper turns and changing elevation.",
+    style: "mountain",
+  },
+] as const;
+
+export type RaceMapId = (typeof RACE_MAPS)[number]["id"];
+
 export const CAMERA_MODES = [
   { id: "chase", label: "Chase" },
   { id: "hood", label: "Hood" },
@@ -127,11 +152,19 @@ export const CAMERA_MODES = [
 
 /** Night is the tuned default, so index 1 keeps the original circuit look. */
 export const raceSession = {
+  mapId: "maranello" as RaceMapId,
   envIndex: 1,
   camMode: 0,
+  carLightsOn: false,
 };
 
 const listeners = new Set<(session: typeof raceSession) => void>();
+let raceConditionsLocked = false;
+
+/** Locks the selected route and weather for the duration of an active race. */
+export function lockRaceConditions(locked: boolean) {
+  raceConditionsLocked = locked;
+}
 
 export function subscribeRaceSession(listener: (session: typeof raceSession) => void) {
   listeners.add(listener);
@@ -149,15 +182,25 @@ export function currentEnv(): EnvPreset {
   return ENVIRONMENTS[raceSession.envIndex];
 }
 
+export function setRaceMap(mapId: RaceMapId) {
+  if (raceConditionsLocked || !RACE_MAPS.some((map) => map.id === mapId) || raceSession.mapId === mapId) return;
+  raceSession.mapId = mapId;
+  emit();
+}
+
 export function setEnvironment(index: number) {
+  if (raceConditionsLocked) return;
   const next = ((index % ENVIRONMENTS.length) + ENVIRONMENTS.length) % ENVIRONMENTS.length;
   if (next === raceSession.envIndex) return;
   raceSession.envIndex = next;
   emit();
 }
 
-export function cycleEnvironment() {
-  setEnvironment(raceSession.envIndex + 1);
+export function setRaceLightsEnabled(enabled: boolean) {
+  const next = Boolean(enabled);
+  if (next === raceSession.carLightsOn) return;
+  raceSession.carLightsOn = next;
+  emit();
 }
 
 export function setCameraMode(mode: number) {

@@ -27,6 +27,8 @@ let tyreSource: AudioBufferSourceNode | null = null;
 let nitroGain: GainNode | null = null;
 let nitroOsc: OscillatorNode | null = null;
 let nitroNoise: AudioBufferSourceNode | null = null;
+let crashGain: GainNode | null = null;
+let crashOsc: OscillatorNode | null = null;
 
 /** Idle / redline fundamental, in Hz. */
 const ENGINE_MIN_HZ = 34;
@@ -127,6 +129,16 @@ export function initAudio() {
   nitroNoise.connect(nitroGain);
   nitroNoise.start(now);
 
+  // Reused low thud for barrier impacts; the event handler only schedules ramps.
+  crashGain = ctx.createGain();
+  crashGain.gain.value = 0;
+  crashGain.connect(master);
+  crashOsc = ctx.createOscillator();
+  crashOsc.type = "triangle";
+  crashOsc.frequency.value = 72;
+  crashOsc.connect(crashGain);
+  crashOsc.start(now);
+
   // A live gesture created the context, so this usually resolves immediately.
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
   return ctx;
@@ -177,7 +189,7 @@ export function updateAudio(delta: number, active: boolean) {
 }
 
 /** Short pitch-shifted burst — fired on the Shift edge, not per frame. */
-export function triggerNitroBurst() {
+export function triggerTurboBurst() {
   if (!ctx || !nitroGain || !nitroOsc) return;
   const now = ctx.currentTime;
   nitroGain.gain.cancelScheduledValues(now);
@@ -188,6 +200,20 @@ export function triggerNitroBurst() {
   nitroOsc.frequency.cancelScheduledValues(now);
   nitroOsc.frequency.setValueAtTime(1250, now);
   nitroOsc.frequency.exponentialRampToValueAtTime(170, now + NITRO_BURST);
+}
+
+/** Heavy, short impact thunk triggered only on a debounced barrier collision. */
+export function triggerCrashImpact(strength: number) {
+  if (!ctx || !crashGain || !crashOsc) return;
+  const now = ctx.currentTime;
+  const peak = 0.08 + Math.max(0, Math.min(1, strength)) * 0.34;
+  crashGain.gain.cancelScheduledValues(now);
+  crashGain.gain.setValueAtTime(0.0001, now);
+  crashGain.gain.exponentialRampToValueAtTime(peak, now + 0.012);
+  crashGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+  crashOsc.frequency.cancelScheduledValues(now);
+  crashOsc.frequency.setValueAtTime(142, now);
+  crashOsc.frequency.exponentialRampToValueAtTime(42, now + 0.24);
 }
 
 /** Tears the graph down — called when the race mode unmounts. */
@@ -209,7 +235,8 @@ export function disposeAudio() {
   stop(tyreSource);
   stop(nitroOsc);
   stop(nitroNoise);
-  for (const node of [engineGain, engineFilter, tyreGain, nitroGain, master]) {
+  stop(crashOsc);
+  for (const node of [engineGain, engineFilter, tyreGain, nitroGain, crashGain, master]) {
     try {
       node?.disconnect?.();
     } catch {
@@ -220,6 +247,7 @@ export function disposeAudio() {
   engineGain = engineFilter = null;
   tyreSource = tyreGain = null;
   nitroOsc = nitroGain = nitroNoise = null;
+  crashOsc = crashGain = null;
   master = null;
   const context = ctx;
   ctx = null;

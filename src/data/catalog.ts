@@ -368,19 +368,11 @@ export const CAMERA_PRESETS = [
     id: "cockpit",
     label: "Driver's Eye Digital Cockpit",
     shortLabel: "Cockpit",
-    position: [-0.346, 0.965, 0.16],
-    target: [-0.346, 0.79, -0.58],
+    // Pull back behind the rim and aim through it toward the digital cluster.
+    position: [-0.346, 1.3, 0.85],
+    target: [-0.346, 0.88, -0.82],
     fov: 54,
     interior: !0,
-  },
-  {
-    id: "overhead",
-    label: "Planform Aerodynamic View",
-    shortLabel: "Top Plan",
-    position: [0.02, 7.4, 0.12],
-    target: [0, 0.45, 0.08],
-    fov: 36,
-    overview: true,
   },
 ];
 
