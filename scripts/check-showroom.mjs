@@ -57,10 +57,11 @@ assert.match(showroomSource, /visible=\{garageLightsOn\}/, "Garage dark mode mus
 assert.match(appSource, /aria-label=\{garageLightsOn \? "Turn garage lights off" : "Turn garage lights on"\}/, "Garage lights need an accessible toggle");
 const catalogSource = fs.readFileSync("src/data/catalog.ts", "utf8");
 assert.match(catalogSource, /CARS\.find\([\s\S]*?\) \|\| CARS\[0\]/, "Unknown car IDs must fall back to the default model");
-assert.match(catalogSource, /id: "overhead",[\s\S]*?position: \[0\.02, 10\.5, 0\.45\]/, "Top Plan must frame the full car from above");
+assert.doesNotMatch(catalogSource, /id: "overhead"|shortLabel: "Top Plan"/, "The Top Plan camera preset must be removed");
+assert.match(appSource, /cA\.key <= "7"/, "Camera shortcuts must match the seven remaining presets");
 assert.match(catalogSource, /id: "cockpit",[\s\S]*?position: \[-0\.346, 1\.3, 0\.85\]/, "Cockpit view must pull back behind the steering wheel");
 assert.match(appSource, /\[HA, lg\] = React\.useState\(0\)/, "The steering and front wheels must start centered");
-assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode && U !== "overhead"\}/, "Top Plan must hide floating inspection pins");
+assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode\}/, "Inspection pins must remain available in the remaining camera views");
 const timeline = new LiftTimeline();
 const phases = new Set();
 timeline.begin(1);
@@ -134,5 +135,5 @@ assert.equal(
 );
 
 console.log(
-  "PASS: top-plan and cockpit framing, synchronized steering, garage-light dimmer, gurney-linked flow lines, paint-matched neon, default-car fallback, render-loop safety, lift continuity, and unresolved-name checks.",
+  "PASS: Top Plan removal, cockpit framing, synchronized steering, garage-light dimmer, gurney-linked flow lines, paint-matched neon, default-car fallback, render-loop safety, and unresolved-name checks.",
 );

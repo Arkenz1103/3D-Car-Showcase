@@ -362,7 +362,7 @@ export function App() {
       )
         return;
       if (!(cA.target instanceof HTMLInputElement || cA.target instanceof HTMLTextAreaElement))
-        if (cA.key >= "1" && cA.key <= "8") {
+        if (cA.key >= "1" && cA.key <= "7") {
           const yA = CAMERA_PRESETS[Number(cA.key) - 1];
           yA && KA(yA.id);
         } else
@@ -449,7 +449,7 @@ export function App() {
               technicalView={BA}
               powerMode={WA}
               neonLightsOn={neonLightsOn}
-              showHotspotPins={Wg && !zg && !G.interior && !raceMode && U !== "overhead"}
+              showHotspotPins={Wg && !zg && !G.interior && !raceMode}
             />
           </RaceVehicleRig>
         )}

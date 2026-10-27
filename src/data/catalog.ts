@@ -374,17 +374,6 @@ export const CAMERA_PRESETS = [
     fov: 54,
     interior: !0,
   },
-  {
-    id: "overhead",
-    label: "Planform Aerodynamic View",
-    shortLabel: "Top Plan",
-    // Keep the complete car in frame, with a slight offset to avoid a singular
-    // straight-down look-at direction in OrbitControls.
-    position: [0.02, 10.5, 0.45],
-    target: [0, 0.45, 0.08],
-    fov: 40,
-    overview: true,
-  },
 ];
 
 export const COMPONENT_SPECS = {
