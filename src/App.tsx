@@ -23,7 +23,7 @@ import { stopCityDrive } from "@/three/cityDrive";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
-import { disposeAudio, initAudio, resumeAudio } from "@/three/raceAudio";
+import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, unlockAudioFromGesture } from "@/three/raceAudio";
 import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
@@ -136,6 +136,7 @@ export function App() {
     [openingGate, setOpeningGate] = React.useState(false),
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
     [neonLightsOn, setNeonLightsOn] = React.useState(false);
+  const [liftStartRequested, setLiftStartRequested] = React.useState(false);
   const requestSequence = React.useRef(0);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
@@ -146,7 +147,20 @@ export function App() {
     },
     [],
   );
+  // Best-effort audio startup lets browsers that permit autoplay sound the
+  // entrance immediately. Restricted browsers resume Web Audio on first input.
+  React.useEffect(() => {
+    initAudio();
+    const unlock = () => void unlockAudioFromGesture();
+    window.addEventListener("pointerdown", unlock, true);
+    window.addEventListener("keydown", unlock, true);
+    return () => {
+      window.removeEventListener("pointerdown", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+    };
+  }, []);
   const commitAsset = React.useCallback((asset, car) => {
+    setLiftStartRequested(false);
     setDriveReady(false);
     setDriveAlignmentReady(false);
     React.startTransition(() => {
@@ -295,8 +309,12 @@ export function App() {
       const car = getCarById(Q);
       return runAssetRequest(() => loadVehicleAsset(null, null, car), car);
     }, [Q, runAssetRequest]);
-  const replayEntrance = React.useCallback(() => {
+  const replayEntrance = React.useCallback(async () => {
     if (!I || o) return;
+    // The button/key press is a browser-approved gesture: resume audio first,
+    // then start the hydraulic lift so its sound begins with the movement.
+    await unlockAudioFromGesture();
+    setLiftStartRequested(true);
     P(null);
     W(false);
     p("hero");
@@ -331,7 +349,7 @@ export function App() {
       setOpeningGate(false);
     }, 1350);
   }, []);
-  const enterCityDrive = React.useCallback(() => {
+  const enterCityDrive = React.useCallback(async () => {
     if (cityMode) {
       setCityMode(false);
       setCityPreparing(false);
@@ -346,14 +364,17 @@ export function App() {
       setDriveAlignmentReady(false);
       return;
     }
-    if (!I || o || raceMode || cityPreparing) return;
+    if (!I || o || raceMode || cityPreparing || !liftStartRequested) return;
+    // Wait for the browser to resume audio before starting a sound-bearing motion.
+    await unlockAudioFromGesture();
     setDriveAlignmentReady(false);
     const alignmentNeeded = liftTimeline.alignForDrive(Math.PI);
     if (!alignmentNeeded) setDriveAlignmentReady(true);
     // Keep the garage view and closed gate unchanged while the turntable aligns.
     initAudio();
+    if (alignmentNeeded) playLiftServoSound();
     setCityPreparing(true);
-  }, [cityMode, driveReady, I, o, raceMode, cityPreparing]);
+  }, [cityMode, driveReady, I, o, raceMode, cityPreparing, liftStartRequested]);
   React.useEffect(() => {
     if (!cityPreparing || !driveAlignmentReady) return;
     setCityPreparing(false);
@@ -620,7 +641,7 @@ export function App() {
         )}
         {!raceMode && (
           <>
-            <LiftDirector entranceSeq={E} onDriveAlignmentComplete={onCityDriveAlignmentComplete} />
+            <LiftDirector entranceSeq={E} startAllowed={liftStartRequested} onDriveAlignmentComplete={onCityDriveAlignmentComplete} />
             <Showroom
               theme={H}
               showAeroStreamlines={kA}
@@ -646,6 +667,19 @@ export function App() {
           contain: "strict",
         }}
       />
+      {I && !o && !liftStartRequested && !raceMode && !cityMode && (
+        <div className="fixed inset-0 z-30 flex items-end justify-center pb-10 pointer-events-none">
+          <button
+            type="button"
+            onClick={replayEntrance}
+            className="pointer-events-auto atelier-pill flex items-center gap-3 rounded-2xl px-7 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white border-[#F5C518]/70 bg-black/85 shadow-xl shadow-black/50 hover:bg-[#1a1710] hover:border-[#F5C518] transition-colors cursor-pointer"
+            aria-label="Lift the Car and play the hydraulic lift sound"
+          >
+            <ChevronsUp className="w-5 h-5 text-[#F5C518]" />
+            Lift the Car
+          </button>
+        </div>
+      )}
       {/* Race overlay. It reads the simulation through refs + a subscription, so
           the 60 fps numbers never re-render React or the canvas. */}
       {cityMode && (
@@ -782,10 +816,10 @@ export function App() {
             <button
               type="button"
               onClick={enterCityDrive}
-              disabled={o || !I || raceMode || cityPreparing}
+              disabled={o || !I || raceMode || cityPreparing || !liftStartRequested}
               aria-pressed={cityMode || driveReady}
               className={`atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${cityMode || driveReady ? "border-sky-300/70 text-sky-100 bg-sky-300/20" : "border-sky-300/40 text-white bg-sky-300/10 hover:bg-sky-300/20"}`}
-              title={cityPreparing ? "The elevator is slowly turning the car toward the garage gate" : driveReady ? "The car is aligned. Open the garage gate to start driving" : cityMode ? "Turn city driving off and return the car to the garage" : "Turn on Drive to align the car, then open the gate to leave"}
+              title={!liftStartRequested ? "Click Lift the Car before enabling Drive" : cityPreparing ? "The elevator is slowly turning the car toward the garage gate" : driveReady ? "The car is aligned. Open the garage gate to start driving" : cityMode ? "Turn city driving off and return the car to the garage" : "Turn on Drive to align the car, then open the gate to leave"}
               aria-busy={cityPreparing}
             >
               <Power className={`w-3.5 h-3.5 ${cityMode || driveReady ? "text-sky-200" : "text-zinc-300"}`} />
@@ -903,10 +937,12 @@ export function App() {
               type="button"
               onClick={replayEntrance}
               disabled={o || !I}
-              className="atelier-pill p-2 rounded-xl text-zinc-400 hover:text-white transition-colors cursor-pointer disabled:opacity-50"
-              title="Replay Hydraulic Lift Entrance & 360° Showcase [Key: R]"
+              className="atelier-pill px-3 py-2 rounded-xl text-zinc-300 hover:text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+              title="Lift the car with hydraulic ascent audio and begin the 360° showcase"
+              aria-label="Lift the Car"
             >
-              <ChevronsUp className="w-4 h-4" />
+              <ChevronsUp className="w-4 h-4 text-[#F5C518]" />
+              <span className="font-mono-tech text-[10px] uppercase tracking-wider">Lift the Car</span>
             </button>
             <button
               type="button"

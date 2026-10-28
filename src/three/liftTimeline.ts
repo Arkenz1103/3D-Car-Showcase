@@ -117,6 +117,11 @@ export class LiftTimeline {
     return this.phase !== "idle" && this.phase !== "done";
   }
 
+  /** Elapsed seconds inside the active phase (used to align phase audio). */
+  get elapsed() {
+    return this.t;
+  }
+
   /** Start (or restart) the whole sequence for a new entrance. */
   begin(seq: number) {
     if (this.seq === seq) return;

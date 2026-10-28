@@ -514,24 +514,24 @@ export const Showroom = React.memo(
         <color attach="background" args={[Q.bgHex]} />
         <fog attach="fog" args={[Q.fogHex, 22, 55]} />
         <group name="Maranello_Architectural_Showroom">
-          <StudioEnvironment theme={Q} software={e} lightsOn={garageLightsOn} />
-          {/* The three studio keys follow the Garage Lights switch. A restrained
-              ambient fill stays on in dark mode so the car remains readable. */}
-          <ambientLight intensity={garageLightsOn ? 0.52 : 0.18} color={Q.fillColor} />
-          <hemisphereLight args={[Q.keyColor, "#08090c", garageLightsOn ? 0.72 : 0.24]} />
+          {/* Once the gate exposes the city, keep global scene lighting fixed;
+              the garage switch then affects only its local practical lights. */}
+          <StudioEnvironment theme={Q} software={e} lightsOn={garageLightsOn || cityDriveMode} />
+          <ambientLight intensity={cityDriveMode ? 0.36 : garageLightsOn ? 0.52 : 0.18} color={Q.fillColor} />
+          <hemisphereLight args={[Q.keyColor, "#08090c", cityDriveMode ? 0.48 : garageLightsOn ? 0.72 : 0.24]} />
           <directionalLight
             position={[-3.4, 7.2, -3.2]}
-            intensity={garageLightsOn ? (e ? 2.15 : 2.55) : 0}
+            intensity={garageLightsOn || cityDriveMode ? (e ? 2.15 : 2.55) : 0}
             color={Q.keyColor}
           />
           <directionalLight
             position={[4.2, 4.6, 2.8]}
-            intensity={garageLightsOn ? 1.25 : 0}
+            intensity={garageLightsOn || cityDriveMode ? 1.25 : 0}
             color={Q.fillColor}
           />
           <directionalLight
             position={[0, 3.4, -5.5]}
-            intensity={garageLightsOn ? 0.95 : 0}
+            intensity={garageLightsOn || cityDriveMode ? 0.95 : 0}
             color={Q.rimColor}
           />
           {e ? (
