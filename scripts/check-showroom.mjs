@@ -23,6 +23,22 @@ function loadModule(path, dependencyOverrides = {}) {
 }
 
 const { LiftTimeline, LIFT_TIMING } = loadModule("src/three/liftTimeline.ts");
+const driveLift = new LiftTimeline();
+driveLift.prepareForDrive();
+assert.equal(driveLift.y, 0, "City driving must settle the garage lift to road level");
+assert.equal(driveLift.phase, "done", "The garage lift must stop animating during city driving");
+const alignmentLift = new LiftTimeline();
+assert.equal(alignmentLift.alignForDrive(), true, "Starting Drive must animate the elevator toward the exit-facing orientation");
+assert.equal(alignmentLift.phase, "drive-align", "The lift must expose its drive-alignment phase");
+const alignmentStartYaw = alignmentLift.yaw;
+alignmentLift.step(0.1);
+assert.notEqual(alignmentLift.yaw, alignmentStartYaw, "The turntable must rotate gradually during Drive preparation");
+assert.notEqual(alignmentLift.yaw, Math.PI, "Drive alignment must not snap directly to its target angle");
+for (let frame = 0; frame < 500 && alignmentLift.animating; frame++) alignmentLift.step(1 / 60);
+assert.equal(alignmentLift.phase, "done", "Drive may proceed after the turntable finishes aligning");
+assert.equal(alignmentLift.y, 0, "The elevator must finish at road height");
+assert.equal(alignmentLift.yaw, Math.PI, "The car must finish facing out through the garage gate");
+assert.equal(alignmentLift.alignForDrive(), false, "An already aligned lift should not force another turn");
 const { orientCameraGoal, responsiveCameraGoal } = loadModule("src/three/cameraFraming.ts");
 const { getNeonPalette } = loadModule("src/three/neonColor.ts");
 const { isBrakeLightSurface } = loadModule("src/three/brakeLights.ts");
@@ -48,9 +64,80 @@ for (const [assetFile, expectedCount] of [["car-2.ts", 3], ["car-3.ts", 1], ["sf
 const raceSessionModule = loadModule("src/three/raceSession.ts");
 const raceTrackModule = loadModule("src/three/raceTrack.ts", { "./raceSession": raceSessionModule });
 const raceEngineModule = loadModule("src/three/raceEngine.ts", { "./raceTrack": raceTrackModule });
+const cityLayoutModule = loadModule("src/three/cityLayout.ts");
+const cityDriveModule = loadModule("src/three/cityDrive.ts", { "./raceEngine": raceEngineModule, "./cityLayout": cityLayoutModule });
 const showroomSource = fs.readFileSync("src/three/Showroom.tsx", "utf8");
+const appSource = fs.readFileSync("src/App.tsx", "utf8");
 const garageGateSource = showroomSource.match(/function GarageGate\([\s\S]*?\n}\n\nfunction ExteriorApron/);
 assert(garageGateSource, "The motorized garage gate component must exist");
+assert.match(appSource, /onClick=\{enterCityDrive\}[\s\S]*aria-pressed=\{cityMode \|\| driveReady\}/, "The garage view must provide an accessible Drive on/off/armed switch");
+assert.match(appSource, /\$\{cityMode \|\| driveReady \? "ON" : "OFF"\}/, "The Drive control must visibly indicate its ready/on state");
+assert.match(appSource, /const openGarageForCity[\s\S]*setCityExteriorVisible\(true\)[\s\S]*setGarageGateOpen\(true\)/, "Opening the garage gate must reveal the city outside from the garage view");
+assert.match(appSource, /cityDriveMode=\{cityExteriorVisible\}[\s\S]*<OpenCityWorld visible=\{cityExteriorVisible\} driving=\{cityMode\}/, "Opening the gate must reveal the exterior without replacing the garage backdrop");
+assert.match(showroomSource, /<color attach="background" args=\{\[Q\.bgHex\]\}/, "The garage background must remain unchanged when the gate opens");
+assert.match(showroomSource, /<fog attach="fog" args=\{\[Q\.fogHex, 22, 55\]\}/, "The garage fog must remain unchanged when the gate opens");
+assert.match(fs.readFileSync("src/three/CityWorld.tsx", "utf8"), /City_Sky_Backdrop[\s\S]*meshBasicMaterial color="#9fc5d9" side=\{BackSide\}[^>]*fog=\{false\}/, "The exterior sky must be rendered locally through the gate");
+assert.match(fs.readFileSync("src/three/CityWorld.tsx", "utf8"), /const outside = driving && cityDrive\.z > 19/, "City lighting must wait until the camera has cleared the garage doorway");
+assert.match(appSource, /setGarageGateOpen\(true\)[\s\S]*setCityMode\(true\)/, "City mode must only begin after the gate-opening transition");
+assert.match(appSource, /liftTimeline\.alignForDrive\(Math\.PI\)/, "Drive ON must start the slow turntable alignment toward the garage gate");
+assert.match(appSource, /Keep the garage view and closed gate unchanged while the turntable aligns/);
+const driveToggleSource = appSource.match(/const enterCityDrive = React\.useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[cityMode, driveReady/);
+assert(driveToggleSource, "The Drive switch must have its own preparation flow");
+assert.doesNotMatch(driveToggleSource[1], /openGarageForCity\(\)|setGarageGateOpen\(true\)/, "Turning on Drive must not open the gate automatically");
+assert.match(appSource, /if \(!driveReady \|\| !garageGateOpen \|\| openingGate \|\| !cityGateReady \|\| !citySceneReady \|\| cityMode\) return;/, "The car must wait for the user-opened gate and ready city scene before driving");
+assert.match(appSource, /const toggleGarageGate = React\.useCallback\(\(\) => \{[\s\S]*openGarageForCity\(\)/, "The user-operated gate button must open the gate independently of Drive preparation");
+assert.match(appSource, /<LiftDirector entranceSeq=\{E\} onDriveAlignmentComplete=\{onCityDriveAlignmentComplete\}/, "The lift timeline must notify the UI when the car has finished turning toward the gate");
+assert.match(appSource, /<OpenCityWorld[\s\S]*onReady=\{onCitySceneReady\}[\s\S]*<CityDriveDirector/,  "The city scene must be prewarmed before its driving controller starts");
+assert.match(fs.readFileSync("src/three/CityWorld.tsx", "utf8"), /gl\.compileAsync\(scene, camera\)/, "City shaders must be compiled during the gate-opening transition");
+assert.match(showroomSource, /visible=\{!cityDriveMode\}[\s\S]*<ExteriorApron cityDriveMode=\{cityDriveMode\}/, "City mode must hide the garage's short exterior backdrop");
+assert(cityLayoutModule.CITY_BUILDINGS.length >= 16, "The boulevard must have a bounded set of city buildings");
+assert(!cityLayoutModule.isCityBuildingAt(0, 0), "The car must have a clear garage exit");
+assert(cityLayoutModule.isCityBuildingAt(cityLayoutModule.CITY_BUILDINGS[0].x, cityLayoutModule.CITY_BUILDINGS[0].z), "Building collision data must match the rendered layout");
+const roadIds = new Set(cityLayoutModule.CITY_ROADS.map((road) => road.id));
+for (const id of ["boulevard", "west-avenue", "east-avenue", "beach-road", "mountain-road", "bridge-road"]) {
+  assert(roadIds.has(id), `The connected city network must include ${id}`);
+}
+assert(cityLayoutModule.CITY_ROADS.length >= 15, "The city must include a connected grid, not only a themed highway");
+assert(cityLayoutModule.CITY_START_Z > 10, "The city boulevard must begin outside the garage gate");
+assert(cityLayoutModule.isCityGarageExitAt(0, 5), "The short garage apron must remain driveable before the city road begins");
+assert(!cityLayoutModule.CITY_MARKINGS.some((marking) => Math.abs(marking.x) < 1 && marking.z < 10), "Road center markings must not extend into the garage interior");
+assert(cityLayoutModule.sampleCityRoad(70, 164).distance < 4, "Beach-route collision sampling must match the rendered road");
+assert(cityLayoutModule.sampleCityRoad(-100, 342).y > 20, "The mountain road must carry its elevation into driving data");
+assert.equal(cityLayoutModule.sampleCityRoad(160, 364).y, 4, "The bridge deck must be elevated above the boulevard grid");
+const cityWorldSource = fs.readFileSync("src/three/CityWorld.tsx", "utf8");
+assert.match(cityWorldSource, /createRoadGeometry\(CITY_ROADS\)/, "Every named road must be rendered from the shared network layout");
+assert.match(cityWorldSource, /camera\.far = Math\.max\(originalFar, 800\)/, "The city must remain visible through the open gate before Drive is enabled");
+assert.match(cityWorldSource, /City_Ocean[\s\S]*Beach_Sand[\s\S]*CITY_HILLS[\s\S]*CITY_BRIDGE_RAILS/, "The beach, mountain and bridge routes must have distinct scenery");
+cityDriveModule.startCityDrive();
+cityDriveModule.cityInput.forward = true;
+cityDriveModule.stepCityDrive(1 / 30);
+assert(cityDriveModule.cityDrive.z > 0, "The car must drive forward through the positive-Z garage opening");
+for (let frame = 0; frame < 120; frame++) cityDriveModule.stepCityDrive(1 / 60);
+assert(cityDriveModule.cityDrive.z > 5, "Holding throttle must take the car outside the garage");
+assert(cityDriveModule.cityDrive.speed <= 32, "City handling must enforce its road-speed limit");
+cityDriveModule.stopCityDrive();
+for (const turn of [
+  { z: 110, input: "left", direction: 1, branch: "beach" },
+  { z: 204, input: "right", direction: -1, branch: "mountain" }
+]) {
+  cityDriveModule.startCityDrive();
+  Object.assign(cityDriveModule.cityDrive, { x: 0, y: 0.02, z: turn.z, speed: 8, heading: Math.PI, lastSafeX: 0, lastSafeY: 0.02, lastSafeZ: turn.z });
+  cityDriveModule.cityInput.forward = true;
+  cityDriveModule.cityInput[turn.input] = true;
+  for (let frame = 0; frame < 25; frame++) cityDriveModule.stepCityDrive(1 / 60);
+  cityDriveModule.cityInput[turn.input] = false;
+  for (let frame = 0; frame < 120; frame++) cityDriveModule.stepCityDrive(1 / 60);
+  const branchRoad = cityLayoutModule.sampleCityRoad(cityDriveModule.cityDrive.x, cityDriveModule.cityDrive.z);
+  assert(turn.direction * cityDriveModule.cityDrive.x > 7, `Steering must let the car turn off the boulevard onto the ${turn.branch} route`);
+  assert(branchRoad.distance < branchRoad.width / 2, `The car must remain on the connected ${turn.branch} road`);
+  cityDriveModule.stopCityDrive();
+}
+cityDriveModule.startCityDrive();
+Object.assign(cityDriveModule.cityDrive, { x: 150, y: 0, z: 364, speed: 3, heading: Math.PI * 1.5, lastSafeX: 150, lastSafeY: 0, lastSafeZ: 364 });
+cityDriveModule.cityInput.forward = true;
+cityDriveModule.stepCityDrive(1 / 60);
+assert(cityDriveModule.cityDrive.y >= 4, "The vehicle rig must follow the elevated bridge surface");
+cityDriveModule.stopCityDrive();
 const gateFrame = garageGateSource[0].match(/useFrame\([\s\S]*?\n\s*},\s*(-?\d+)?\);/);
 assert(gateFrame, "The garage gate animation must use a frame callback");
 assert(
@@ -85,7 +172,6 @@ assert.doesNotMatch(vehicleSource, /brake \? 5\.5 : on \? 1\.8/, "Rear point glo
 assert.match(vehicleSource, /position=\{\[0, 0\.014, 0\]\}/, "The underbody glow must sit close to the showroom floor");
 assert.match(vehicleSource, /steeringWheelRotation\.setFromAxisAngle\(STEERING_AXIS_Z/, "The steering rim must turn around its steering axis");
 assert.match(vehicleSource, /quaternion\.copy\(steeringWheelRotation\)\.multiply\(L\.steeringWheelBaseQuaternion\)/, "The steering rim must retain its authored tilt while steering");
-const appSource = fs.readFileSync("src/App.tsx", "utf8");
 assert.match(appSource, /selectedComponent=\{raceMode \? null : V\}/, "Race mode must not retain selected-part color highlighting");
 assert.match(appSource, /onSelectComponent=\{raceMode \? null : Eg\}/, "Race mode must disable click-to-highlight on the car");
 assert.match(appSource, /React\.useState\("sf90"\)/, "The bundled SF90 must remain the default car");
@@ -104,7 +190,7 @@ assert.doesNotMatch(catalogSource, /id: "overhead"|shortLabel: "Top Plan"/, "The
 assert.match(appSource, /cA\.key <= "7"/, "Camera shortcuts must match the seven remaining presets");
 assert.match(catalogSource, /id: "cockpit",[\s\S]*?position: \[-0\.346, 1\.3, 0\.85\]/, "Cockpit view must pull back behind the steering wheel");
 assert.match(appSource, /\[HA, lg\] = React\.useState\(0\)/, "The steering and front wheels must start centered");
-assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode\}/, "Inspection pins must remain available in the remaining camera views");
+assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode && !cityMode\}/, "Inspection pins must remain available in the remaining camera views");
 assert.match(appSource, /Choose a circuit and conditions before starting a race/, "Race should open the circuit and conditions setup first");
 const originalTrackLength = raceTrackModule.TRACK_LENGTH;
 const originalStart = Array.from(raceTrackModule.samples.slice(0, 3));
@@ -132,11 +218,11 @@ assert.doesNotMatch(raceHudSource, /onToggleInteriorLights|interiorLightsOn|Cabi
 assert.match(appSource, /const automaticLights = raceSetupEnvironment !== 0/, "Night and Rain/Fog races must start with the vehicle lights on");
 assert.match(appSource, /event\.code === "KeyL"[\s\S]*?event\.code === "KeyB"/, "Race lighting toggles must retain L and B keyboard shortcuts");
 assert.doesNotMatch(appSource, /KeyI|raceInteriorLights/, "The removed cabin light must not leave a dead keyboard toggle");
-assert.match(appSource, /headlightsOn=\{raceMode \? raceLightsOn : Tg\}/, "Race lights must not change showroom headlight behavior");
+assert.match(appSource, /headlightsOn=\{cityMode \? cityHeadlightsOn : raceMode \? raceLightsOn : Tg\}/, "Race lights must not change showroom headlight behavior");
 assert.match(vehicleSource, /Array\.from\(\{ length: 6 \}/, "Keep all four body and two garage interior point lights mounted");
 assert.match(vehicleSource, /light\.visible = true;[\s\S]*light\.intensity =/, "Keep all point lights mounted and avoid shader-layout changes when toggling them");
 assert.match(vehicleSource, /interiorEnabled[\s\S]*CABIN_AMBIENCE_INTENSITY/, "Garage ambience must still power the cabin lights");
-assert.match(appSource, /interiorLightsOn=\{!raceMode && neonLightsOn\}/, "Cabin ambience must remain in the garage and stay off in races");
+assert.match(appSource, /interiorLightsOn=\{!raceMode && !cityMode && neonLightsOn\}/, "Cabin ambience must remain in the garage and stay off in races");
 assert.doesNotMatch(vehicleSource, /pooledLightsEnabled/, "Do not suppress the original pooled lights during races");
 assert.match(fs.readFileSync("src/three/RaceOpponents.tsx", "utf8"), /raceSession\.carLightsOn/, "AI headlights and taillights must follow the race light setting");
 assert.doesNotMatch(raceDirectorSource, /cycleEnvironment|recoverVehicle|KeyE|KeyR/, "Weather cycling and recovery shortcuts must be disabled during a race");
@@ -281,5 +367,5 @@ assert.equal(
 );
 
 console.log(
-  "PASS: showroom and steering regressions, automatic headlights, full body/cabin lights and hotkeys, weather lock, vertical turbo HUD, minimap, drift, and turbo recharging.",
+  "PASS: showroom, city gate entry and free-drive, steering, lights, race controls, minimap, drift, and turbo regressions.",
 );
