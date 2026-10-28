@@ -31,6 +31,13 @@ let crashGain: GainNode | null = null;
 let crashOsc: OscillatorNode | null = null;
 let liftSoundNodes: AudioNode[] = [];
 let liftSoundTimer: number | null = null;
+let engineStartNodes: AudioNode[] = [];
+let engineStartTimer: number | null = null;
+let garageMusicNodes: AudioNode[] = [];
+let garageMusicBus: GainNode | null = null;
+let garageMusicTimer: number | null = null;
+let garageMusicCleanupTimer: number | null = null;
+let garageMusicPlaying = false;
 
 /** Idle / redline fundamental, in Hz. */
 const ENGINE_MIN_HZ = 34;
@@ -163,6 +170,294 @@ export function unlockAudioFromGesture(): Promise<boolean> {
   if (!context) return Promise.resolve(false);
   const resume = context.state === "running" ? Promise.resolve() : context.resume();
   return resume.then(() => context.state === "running").catch(() => false);
+}
+
+/** Original sample-free showroom loop: mellow keys, warm bass, and a laid-back sports-game beat. */
+export function startGarageTheme() {
+  if (!ctx || ctx.state !== "running" || typeof window === "undefined") return false;
+  if (garageMusicPlaying && garageMusicBus) return true;
+  if (garageMusicCleanupTimer !== null) {
+    window.clearTimeout(garageMusicCleanupTimer);
+    garageMusicCleanupTimer = null;
+    clearGarageMusicNodes();
+  }
+
+  const context = ctx;
+  const now = context.currentTime;
+  const bus = context.createGain();
+  bus.gain.setValueAtTime(0.0001, now);
+  bus.gain.exponentialRampToValueAtTime(0.34, now + 1.4);
+  const compressor = context.createDynamicsCompressor();
+  compressor.threshold.value = -18;
+  compressor.knee.value = 18;
+  compressor.ratio.value = 3;
+  compressor.attack.value = 0.012;
+  compressor.release.value = 0.22;
+  bus.connect(compressor);
+  compressor.connect(context.destination);
+
+  const delay = context.createDelay(1);
+  delay.delayTime.value = 0.31;
+  const delayFeedback = context.createGain();
+  delayFeedback.gain.value = 0.17;
+  const delayFilter = context.createBiquadFilter();
+  delayFilter.type = "lowpass";
+  delayFilter.frequency.value = 2600;
+  delay.connect(delayFilter);
+  delayFilter.connect(bus);
+  delay.connect(delayFeedback);
+  delayFeedback.connect(delay);
+
+  garageMusicBus = bus;
+  garageMusicNodes = [bus, compressor, delay, delayFeedback, delayFilter];
+  garageMusicPlaying = true;
+
+  const trackNodes = (nodes: AudioNode[], source: AudioScheduledSourceNode) => {
+    garageMusicNodes.push(...nodes);
+    source.addEventListener("ended", () => {
+      for (const node of nodes) {
+        try { node.disconnect(); } catch { /* Already detached. */ }
+        const index = garageMusicNodes.indexOf(node);
+        if (index >= 0) garageMusicNodes.splice(index, 1);
+      }
+    }, { once: true });
+  };
+  const midiHz = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
+  const note = (frequency: number, at: number, duration: number, level: number, wave: OscillatorType, echo = false, cutoff = 2200) => {
+    const oscillator = context.createOscillator();
+    oscillator.type = wave;
+    oscillator.frequency.setValueAtTime(frequency, at);
+    const filter = context.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(cutoff, at);
+    const envelope = context.createGain();
+    envelope.gain.setValueAtTime(0.0001, at);
+    envelope.gain.exponentialRampToValueAtTime(level, at + Math.min(0.035, duration * 0.18));
+    envelope.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+    oscillator.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(bus);
+    if (echo) envelope.connect(delay);
+    oscillator.start(at);
+    oscillator.stop(at + duration + 0.025);
+    trackNodes([oscillator, filter, envelope], oscillator);
+  };
+  const noiseHit = (at: number, duration: number, level: number, highpass: number, bandpass = false) => {
+    const source = context.createBufferSource();
+    source.buffer = noise;
+    const filter = context.createBiquadFilter();
+    filter.type = bandpass ? "bandpass" : "highpass";
+    filter.frequency.setValueAtTime(highpass, at);
+    filter.Q.value = bandpass ? 0.8 : 0.35;
+    const envelope = context.createGain();
+    envelope.gain.setValueAtTime(0.0001, at);
+    envelope.gain.exponentialRampToValueAtTime(level, at + 0.004);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+    source.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(bus);
+    source.start(at);
+    source.stop(at + duration + 0.02);
+    trackNodes([source, filter, envelope], source);
+  };
+  const kick = (at: number) => {
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(118, at);
+    oscillator.frequency.exponentialRampToValueAtTime(45, at + 0.14);
+    const envelope = context.createGain();
+    envelope.gain.setValueAtTime(0.0001, at);
+    envelope.gain.exponentialRampToValueAtTime(0.48, at + 0.006);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+    oscillator.connect(envelope);
+    envelope.connect(bus);
+    oscillator.start(at);
+    oscillator.stop(at + 0.24);
+    trackNodes([oscillator, envelope], oscillator);
+  };
+
+  const bpm = 92;
+  const eighth = 60 / bpm / 2;
+  const barDuration = eighth * 8;
+  const chordNotes = [
+    [50, 53, 57, 60, 64], // Dm9
+    [46, 50, 53, 57],     // Bbmaj7
+    [41, 45, 48, 52],     // Fmaj7
+    [48, 52, 55, 62],     // Cadd9
+  ];
+  const bassRoots = [38, 34, 29, 36];
+  const melody = [0, -1, 2, -1, 3, -1, 2, -1, 0, -1, 2, 4, -1, 3, 2, -1, 0, -1, 2, -1, 4, -1, 5, -1, 3, -1, 2, 0, -1, 2, 3, 5];
+  const melodyNotes = [62, 65, 67, 69, 72, 74];
+  const noise = makeAirNoiseBuffer(context);
+  let nextStepTime = now + 0.06;
+  let stepNumber = 0;
+  const scheduleAhead = () => {
+    if (!garageMusicPlaying || !ctx || ctx !== context || context.state !== "running") return;
+    const horizon = context.currentTime + 0.12;
+    while (nextStepTime < horizon) {
+      const stepInLoop = stepNumber % 32;
+      const bar = Math.floor(stepInLoop / 8);
+      const stepInBar = stepInLoop % 8;
+      const beat = Math.floor(stepInBar / 2);
+      const at = nextStepTime;
+      if (stepInBar === 0 || stepInBar === 4 || (stepInBar === 7 && bar % 2 === 1)) kick(at);
+      if (stepInBar === 2 || stepInBar === 6) noiseHit(at, 0.16, 0.105, 1550, true);
+      if (stepInBar % 2 === 1) noiseHit(at, 0.045, stepInBar === 7 ? 0.025 : 0.04, 7200);
+      if (stepInBar === 0) {
+        for (const midi of chordNotes[bar]) note(midiHz(midi), at, barDuration * 0.94, 0.018, "triangle", false, 1500);
+      }
+      if (stepInBar === 0 || stepInBar === 4) {
+        const bassMidi = bassRoots[bar] + (beat === 2 ? 7 : 0);
+        note(midiHz(bassMidi), at, 0.34, 0.16, "sine", false, 250);
+      }
+      const melodyIndex = melody[stepInLoop];
+      if (melodyIndex >= 0) note(midiHz(melodyNotes[melodyIndex]), at, 0.23, 0.055, "sine", true, 1900);
+      stepNumber++;
+      nextStepTime += eighth;
+    }
+  };
+  // Prime the first beat immediately; the look-ahead keeps later steps gap-free.
+  scheduleAhead();
+  garageMusicTimer = window.setInterval(scheduleAhead, 25);
+  return true;
+}
+
+function clearGarageMusicNodes() {
+  const nodes = [...garageMusicNodes];
+  garageMusicNodes = [];
+  garageMusicBus = null;
+  for (const node of nodes) {
+    try { (node as any).stop?.(); } catch { /* Already stopped. */ }
+    try { node.disconnect(); } catch { /* Already detached. */ }
+  }
+}
+
+export function stopGarageTheme() {
+  if (garageMusicTimer !== null && typeof window !== "undefined") window.clearInterval(garageMusicTimer);
+  garageMusicTimer = null;
+  garageMusicPlaying = false;
+  const bus = garageMusicBus;
+  if (bus && ctx && ctx.state === "running") {
+    try {
+      const now = ctx.currentTime;
+      bus.gain.cancelScheduledValues(now);
+      bus.gain.setValueAtTime(Math.max(0.0001, bus.gain.value), now);
+      bus.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+    } catch { /* Context may be shutting down. */ }
+  }
+  if (garageMusicCleanupTimer !== null && typeof window !== "undefined") window.clearTimeout(garageMusicCleanupTimer);
+  if (typeof window !== "undefined") {
+    garageMusicCleanupTimer = window.setTimeout(() => {
+      garageMusicCleanupTimer = null;
+      clearGarageMusicNodes();
+    }, 220);
+  } else clearGarageMusicNodes();
+}
+
+/** Synthesized starter crank, engine catch, and brief ignition flare. */
+export function playEngineStartSound() {
+  if (!ctx || ctx.state !== "running" || !master || typeof window === "undefined") return false;
+  stopEngineStartSound();
+
+  const context = ctx;
+  const now = context.currentTime;
+  const output = context.createGain();
+  output.gain.setValueAtTime(0.0001, now);
+  output.gain.setValueAtTime(0.0001, now + 0.035);
+  output.gain.exponentialRampToValueAtTime(0.52, now + 0.12);
+  output.gain.setValueAtTime(0.42, now + 0.72);
+  output.gain.exponentialRampToValueAtTime(0.0001, now + 1.42);
+  output.connect(master);
+
+  const starterFilter = context.createBiquadFilter();
+  starterFilter.type = "lowpass";
+  starterFilter.frequency.setValueAtTime(280, now);
+  starterFilter.frequency.linearRampToValueAtTime(520, now + 0.45);
+  starterFilter.Q.value = 1.6;
+  const starterGain = context.createGain();
+  starterGain.gain.setValueAtTime(0.0001, now);
+  starterGain.gain.exponentialRampToValueAtTime(0.2, now + 0.04);
+  starterGain.gain.setValueAtTime(0.11, now + 0.14);
+  starterGain.gain.setValueAtTime(0.18, now + 0.25);
+  starterGain.gain.setValueAtTime(0.1, now + 0.34);
+  starterGain.gain.setValueAtTime(0.15, now + 0.46);
+  starterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.63);
+  starterFilter.connect(starterGain);
+  starterGain.connect(output);
+
+  const starter = context.createOscillator();
+  starter.type = "sawtooth";
+  starter.frequency.setValueAtTime(48, now);
+  starter.frequency.linearRampToValueAtTime(39, now + 0.22);
+  starter.frequency.linearRampToValueAtTime(55, now + 0.5);
+  starter.connect(starterFilter);
+  starter.start(now);
+  starter.stop(now + 0.66);
+
+  const engineFilter = context.createBiquadFilter();
+  engineFilter.type = "lowpass";
+  engineFilter.frequency.setValueAtTime(520, now + 0.42);
+  engineFilter.frequency.linearRampToValueAtTime(2100, now + 0.76);
+  engineFilter.frequency.exponentialRampToValueAtTime(780, now + 1.38);
+  engineFilter.Q.value = 1.15;
+  const engineGain = context.createGain();
+  engineGain.gain.setValueAtTime(0.0001, now);
+  engineGain.gain.setValueAtTime(0.0001, now + 0.42);
+  engineGain.gain.exponentialRampToValueAtTime(0.3, now + 0.7);
+  engineGain.gain.setValueAtTime(0.2, now + 0.88);
+  engineGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+  engineFilter.connect(engineGain);
+  engineGain.connect(output);
+
+  const catchFire = context.createOscillator();
+  catchFire.type = "sawtooth";
+  catchFire.frequency.setValueAtTime(31, now + 0.42);
+  catchFire.frequency.exponentialRampToValueAtTime(104, now + 0.74);
+  catchFire.frequency.exponentialRampToValueAtTime(44, now + 1.38);
+  catchFire.connect(engineFilter);
+  catchFire.start(now + 0.42);
+  catchFire.stop(now + 1.44);
+
+  const catchNoiseFilter = context.createBiquadFilter();
+  catchNoiseFilter.type = "bandpass";
+  catchNoiseFilter.frequency.setValueAtTime(460, now + 0.42);
+  catchNoiseFilter.frequency.exponentialRampToValueAtTime(1320, now + 0.78);
+  catchNoiseFilter.Q.value = 0.8;
+  const catchNoiseGain = context.createGain();
+  catchNoiseGain.gain.setValueAtTime(0.0001, now);
+  catchNoiseGain.gain.setValueAtTime(0.0001, now + 0.44);
+  catchNoiseGain.gain.exponentialRampToValueAtTime(0.045, now + 0.68);
+  catchNoiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 1.12);
+  catchNoiseFilter.connect(catchNoiseGain);
+  catchNoiseGain.connect(output);
+
+  const catchNoise = context.createBufferSource();
+  catchNoise.buffer = makeAirNoiseBuffer(context);
+  catchNoise.connect(catchNoiseFilter);
+  catchNoise.start(now + 0.43);
+  catchNoise.stop(now + 1.16);
+
+  engineStartNodes = [output, starterFilter, starterGain, starter, engineFilter, engineGain, catchFire, catchNoiseFilter, catchNoiseGain, catchNoise];
+  engineStartTimer = window.setTimeout(stopEngineStartSound, 1650);
+  return true;
+}
+
+export function stopEngineStartSound() {
+  if (engineStartTimer !== null && typeof window !== "undefined") window.clearTimeout(engineStartTimer);
+  engineStartTimer = null;
+  for (const node of engineStartNodes) {
+    try {
+      (node as any).stop?.();
+    } catch {
+      // A scheduled source may already have finished.
+    }
+    try {
+      node.disconnect();
+    } catch {
+      // Already detached.
+    }
+  }
+  engineStartNodes = [];
 }
 
 /**
@@ -339,6 +634,8 @@ export function triggerCrashImpact(strength: number) {
 
 /** Tears the graph down — called when the race mode unmounts. */
 export function disposeAudio() {
+  stopGarageTheme();
+  stopEngineStartSound();
   stopLiftServoSound();
   const stop = (node: any) => {
     try {

@@ -23,7 +23,7 @@ import { stopCityDrive } from "@/three/cityDrive";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
-import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, unlockAudioFromGesture } from "@/three/raceAudio";
+import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, startGarageTheme, stopGarageTheme, unlockAudioFromGesture } from "@/three/raceAudio";
 import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
@@ -49,6 +49,8 @@ import {
   Map,
   Maximize2,
   Moon,
+  Music2,
+  VolumeX,
   Mountain,
   MousePointerClick,
   Palette,
@@ -135,12 +137,17 @@ export function App() {
     [garageGateOpen, setGarageGateOpen] = React.useState(false),
     [openingGate, setOpeningGate] = React.useState(false),
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
-    [neonLightsOn, setNeonLightsOn] = React.useState(false);
+    [neonLightsOn, setNeonLightsOn] = React.useState(false),
+    [garageMusicOn, setGarageMusicOn] = React.useState(true);
   const [liftStartRequested, setLiftStartRequested] = React.useState(false);
   const requestSequence = React.useRef(0);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
   const raceBodyGlowRef = React.useRef(false);
+  const garageMusicRef = React.useRef(garageMusicOn);
+  const garageModeRef = React.useRef(!raceMode && !cityMode);
+  garageMusicRef.current = garageMusicOn;
+  garageModeRef.current = !raceMode && !cityMode;
   React.useEffect(
     () => () => {
       if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
@@ -151,7 +158,11 @@ export function App() {
   // entrance immediately. Restricted browsers resume Web Audio on first input.
   React.useEffect(() => {
     initAudio();
-    const unlock = () => void unlockAudioFromGesture();
+    const unlock = () => {
+      void unlockAudioFromGesture().then((ready) => {
+        if (ready && garageMusicRef.current && garageModeRef.current) startGarageTheme();
+      });
+    };
     window.addEventListener("pointerdown", unlock, true);
     window.addEventListener("keydown", unlock, true);
     return () => {
@@ -159,6 +170,11 @@ export function App() {
       window.removeEventListener("keydown", unlock, true);
     };
   }, []);
+  React.useEffect(() => {
+    if (garageMusicOn && !raceMode && !cityMode) startGarageTheme();
+    else stopGarageTheme();
+    return () => stopGarageTheme();
+  }, [garageMusicOn, raceMode, cityMode]);
   const commitAsset = React.useCallback((asset, car) => {
     setLiftStartRequested(false);
     setDriveReady(false);
@@ -510,6 +526,20 @@ export function App() {
     }, 1350);
   }, [openingGate, raceMode, cityMode, cityPreparing, garageGateOpen, openGarageForCity]);
   const toggleGarageLights = React.useCallback(() => setGarageLightsOn((on) => !on), []);
+  const toggleGarageMusic = React.useCallback(() => {
+    const next = !garageMusicRef.current;
+    garageMusicRef.current = next;
+    setGarageMusicOn(next);
+    if (!next) {
+      stopGarageTheme();
+      return;
+    }
+    if (garageModeRef.current) {
+      void unlockAudioFromGesture().then((ready) => {
+        if (ready && garageMusicRef.current && garageModeRef.current) startGarageTheme();
+      });
+    }
+  }, []);
   const toggleNeonLighting = React.useCallback(() => setNeonLightsOn((enabled) => !enabled), []);
   const toggleGurney = React.useCallback(() => {
     const enabled = !nA;
@@ -653,7 +683,7 @@ export function App() {
             />
             <OpenCityWorld visible={cityExteriorVisible} driving={cityMode} onReady={onCitySceneReady} />
             {cityMode ? (
-              <CityDriveDirector onExit={exitCityDrive} onToggleHeadlights={toggleCityHeadlights} />
+              <CityDriveDirector carId={Q} onExit={exitCityDrive} onToggleHeadlights={toggleCityHeadlights} />
             ) : (
               <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
             )}
@@ -668,14 +698,14 @@ export function App() {
         }}
       />
       {I && !o && !liftStartRequested && !raceMode && !cityMode && (
-        <div className="fixed inset-0 z-30 flex items-end justify-center pb-10 pointer-events-none">
+        <div className="fixed inset-0 z-30 flex items-center justify-center pointer-events-none">
           <button
             type="button"
             onClick={replayEntrance}
-            className="pointer-events-auto atelier-pill flex items-center gap-3 rounded-2xl px-7 py-4 text-sm font-semibold uppercase tracking-[0.16em] text-white border-[#F5C518]/70 bg-black/85 shadow-xl shadow-black/50 hover:bg-[#1a1710] hover:border-[#F5C518] transition-colors cursor-pointer"
+            className="pointer-events-auto atelier-pill flex items-center gap-3 rounded-2xl border border-[#F5C518]/80 bg-black/90 px-9 py-5 text-base font-semibold uppercase tracking-[0.16em] text-white shadow-[0_0_42px_rgba(245,197,24,0.28)] backdrop-blur-md transition-all hover:scale-[1.03] hover:bg-[#1a1710] hover:border-[#F5C518] cursor-pointer"
             aria-label="Lift the Car and play the hydraulic lift sound"
           >
-            <ChevronsUp className="w-5 h-5 text-[#F5C518]" />
+            <ChevronsUp className="w-6 h-6 text-[#F5C518]" />
             Lift the Car
           </button>
         </div>
@@ -851,6 +881,17 @@ export function App() {
               <span className="hidden xl:inline font-mono-tech text-[10px] uppercase tracking-wider">
                 {garageLightsOn ? "Garage Lights" : "Garage Dark"}
               </span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleGarageMusic}
+              aria-label={garageMusicOn ? "Turn garage theme music off" : "Turn garage theme music on"}
+              aria-pressed={garageMusicOn}
+              className={`atelier-pill p-2 rounded-xl transition-all cursor-pointer ${garageMusicOn ? "border-[#F5C518]/60 text-[#F5C518] bg-[#F5C518]/10" : "text-zinc-400 hover:text-white"}`}
+              title={garageMusicOn ? "Garage theme music on — click to mute" : "Garage theme music off — click to play"}
+            >
+              {garageMusicOn ? <Music2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              <span className="hidden 2xl:inline font-mono-tech text-[10px] uppercase tracking-wider">Music</span>
             </button>
             <button
               type="button"

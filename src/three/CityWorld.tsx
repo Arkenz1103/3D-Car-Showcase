@@ -209,9 +209,9 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
   return (
     <group ref={root} name="Open_City_Exterior" visible={visible}>
       {/* The sky is local to the exterior; the garage keeps its own background. */}
-      <mesh name="City_Sky_Backdrop" scale={[620, 620, 620]} raycast={() => null} frustumCulled={false}>
+      <mesh name="City_Sky_Backdrop" scale={[620, 620, 620]} raycast={() => null} frustumCulled={false} renderOrder={-1000}>
         <sphereGeometry args={[1, 32, 24]} />
-        <meshBasicMaterial color="#9fc5d9" side={BackSide} depthWrite={false} fog={false} />
+        <meshBasicMaterial color="#9fc5d9" side={BackSide} depthTest={false} depthWrite={false} toneMapped={false} fog={false} />
       </mesh>
       {/* Keep garage lighting unchanged while the shutter is open; outdoor fill
           comes up only after the car and chase camera have cleared the doorway. */}
@@ -219,9 +219,9 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
       <hemisphereLight ref={hemisphere} args={["#a9d5f2", "#394536", 0]} />
       <directionalLight ref={sun} position={[-42, 72, -48]} intensity={0} color="#fff1d6" />
 
-      <mesh name="City_Ground" position={[0, -0.25, CITY_GROUND_CENTER_Z]} raycast={() => null}>
-        <boxGeometry args={[470, 0.35, CITY_GROUND_LENGTH]} />
-        <meshStandardMaterial color="#737d6d" roughness={1} fog={false} />
+      <mesh name="City_Ground" rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.08, CITY_GROUND_CENTER_Z]} raycast={() => null}>
+        <planeGeometry args={[470, CITY_GROUND_LENGTH]} />
+        <meshStandardMaterial color="#3d5144" roughness={1} fog={false} />
       </mesh>
       <mesh name="City_Ocean" position={[180, -0.54, 285]} raycast={() => null}>
         <boxGeometry args={[160, 1.0, 340]} />

@@ -2,8 +2,8 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { MathUtils, Matrix4, Quaternion, Vector3 } from "three";
-import { resumeAudio, updateAudio } from "./raceAudio";
-import { cityDrive, cityInput, releaseCityKeys, startCityDrive, stepCityDrive, stopCityDrive } from "./cityDrive";
+import { playEngineStartSound, resumeAudio, stopEngineStartSound, updateAudio } from "./raceAudio";
+import { cityDrive, cityInput, releaseCityKeys, selectCityGear, shiftCityGear, startCityDrive, stepCityDrive, stopCityDrive, toggleCityEngine } from "./cityDrive";
 
 const cameraGoal = new Vector3();
 const cameraLook = new Vector3();
@@ -15,7 +15,7 @@ const CAMERA_MOUNTS = [
   { behind: -0.85, height: 1.22, look: 18, fov: 72 },
 ];
 
-export function CityDriveDirector({ onExit, onToggleHeadlights }) {
+export function CityDriveDirector({ onExit, onToggleHeadlights, carId = "sf90" }) {
   const { camera, invalidate } = useThree();
   const mount = useRef(0);
   const ready = useRef(false);
@@ -23,7 +23,7 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
   const previousFov = useRef(camera.fov);
 
   useLayoutEffect(() => {
-    startCityDrive();
+    startCityDrive(carId);
     ready.current = true;
     camera.far = 800;
     camera.updateProjectionMatrix();
@@ -36,7 +36,7 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
       releaseCityKeys();
       stopCityDrive();
     };
-  }, [camera, invalidate]);
+  }, [camera, invalidate, carId]);
 
   useEffect(() => {
     const setKey = (code, down) => {
@@ -44,7 +44,7 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
         case "KeyW":
         case "ArrowUp": cityInput.forward = down; break;
         case "KeyS":
-        case "ArrowDown": cityInput.reverse = down; break;
+        case "ArrowDown": cityInput.brake = down; break;
         case "KeyA":
         case "ArrowLeft": cityInput.left = down; break;
         case "KeyD":
@@ -64,6 +64,26 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
         onExit();
         return;
       }
+      if (event.code === "KeyQ") {
+        shiftCityGear(-1);
+        return;
+      }
+      if (event.code === "KeyE") {
+        shiftCityGear(1);
+        return;
+      }
+      if (event.code === "KeyN") {
+        selectCityGear(0);
+        return;
+      }
+      if (event.code === "KeyR") {
+        selectCityGear(-1);
+        return;
+      }
+      if (event.code === "KeyI") {
+        toggleEngineWithSound();
+        return;
+      }
       if (event.code === "KeyC") {
         mount.current = (mount.current + 1) % CAMERA_MOUNTS.length;
         return;
@@ -76,6 +96,12 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
       if (event.code === "Space" || event.code.startsWith("Arrow")) event.preventDefault();
     };
     const keyup = (event) => setKey(event.code, false);
+    const toggleEngineWithSound = () => {
+      const wasRunning = cityDrive.engineRunning;
+      if (!toggleCityEngine()) return;
+      if (!wasRunning && cityDrive.engineRunning) playEngineStartSound();
+      else stopEngineStartSound();
+    };
     const blur = () => releaseCityKeys();
     window.addEventListener("keydown", keydown);
     window.addEventListener("keyup", keyup);
@@ -125,7 +151,7 @@ export function CityDriveDirector({ onExit, onToggleHeadlights }) {
       camera.fov = MathUtils.damp(camera.fov, targetFov, 3.5, Math.min(delta, 0.05));
       camera.updateProjectionMatrix();
     }
-    updateAudio(delta, true);
+    updateAudio(delta, cityDrive.engineRunning);
     state.invalidate();
   }, -6);
 
