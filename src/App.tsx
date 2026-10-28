@@ -16,6 +16,10 @@ import { loadVehicleAsset } from "@/lib/gltf";
 import { ENVIRONMENTS, RACE_MAPS, lockRaceConditions, raceSession, setEnvironment, setRaceLightsEnabled } from "@/three/raceSession";
 import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
+import { CityHud } from "@/components/CityHud";
+import { CityDriveDirector } from "@/three/CityDriveDirector";
+import { OpenCityWorld } from "@/three/CityWorld";
+import { stopCityDrive } from "@/three/cityDrive";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
@@ -48,6 +52,7 @@ import {
   Mountain,
   MousePointerClick,
   Palette,
+  Power,
   Sun,
   RotateCw,
   SlidersVertical,
@@ -114,6 +119,14 @@ export function App() {
     [tA, eg] = React.useState("garage"),
     [zg, $] = React.useState(!1),
     [raceMode, setRaceMode] = React.useState(!1),
+    [cityMode, setCityMode] = React.useState(false),
+    [cityExteriorVisible, setCityExteriorVisible] = React.useState(false),
+    [cityPreparing, setCityPreparing] = React.useState(false),
+    [driveAlignmentReady, setDriveAlignmentReady] = React.useState(false),
+    [driveReady, setDriveReady] = React.useState(false),
+    [cityGateReady, setCityGateReady] = React.useState(false),
+    [citySceneReady, setCitySceneReady] = React.useState(false),
+    [cityHeadlightsOn, setCityHeadlightsOn] = React.useState(true),
     [raceLightsOn, setRaceLightsOn] = React.useState(false),
     [raceBodyGlowOn, setRaceBodyGlowOn] = React.useState(false),
     [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
@@ -134,6 +147,8 @@ export function App() {
     [],
   );
   const commitAsset = React.useCallback((asset, car) => {
+    setDriveReady(false);
+    setDriveAlignmentReady(false);
     React.startTransition(() => {
       C(asset);
       e((sequence) => sequence + 1);
@@ -296,11 +311,76 @@ export function App() {
   // Race first opens a setup screen; the actual circuit starts only after the
   // player confirms a map and weather/time preset.
   const enterRace = React.useCallback(() => {
-    if (!I || o || openingGate) return;
+    if (!I || o || openingGate || cityMode || cityPreparing) return;
     setRaceSetupMap(raceSession.mapId);
     setRaceSetupEnvironment(raceSession.envIndex);
     setRaceSetupOpen(true);
-  }, [I, o, openingGate]);
+  }, [I, o, openingGate, cityMode, cityPreparing]);
+  const onCitySceneReady = React.useCallback(() => setCitySceneReady(true), []);
+  const onCityDriveAlignmentComplete = React.useCallback(() => setDriveAlignmentReady(true), []);
+  const openGarageForCity = React.useCallback(() => {
+    setCityGateReady(false);
+    setCitySceneReady(false);
+    setCityExteriorVisible(true);
+    setGarageGateOpen(true);
+    setOpeningGate(true);
+    if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
+    raceTransitionTimer.current = window.setTimeout(() => {
+      raceTransitionTimer.current = null;
+      setCityGateReady(true);
+      setOpeningGate(false);
+    }, 1350);
+  }, []);
+  const enterCityDrive = React.useCallback(() => {
+    if (cityMode) {
+      setCityMode(false);
+      setCityPreparing(false);
+      setDriveReady(false);
+      setCityHeadlightsOn(false);
+      stopCityDrive();
+      disposeAudio();
+      return;
+    }
+    if (driveReady) {
+      setDriveReady(false);
+      setDriveAlignmentReady(false);
+      return;
+    }
+    if (!I || o || raceMode || cityPreparing) return;
+    setDriveAlignmentReady(false);
+    const alignmentNeeded = liftTimeline.alignForDrive(Math.PI);
+    if (!alignmentNeeded) setDriveAlignmentReady(true);
+    // Keep the garage view and closed gate unchanged while the turntable aligns.
+    initAudio();
+    setCityPreparing(true);
+  }, [cityMode, driveReady, I, o, raceMode, cityPreparing]);
+  React.useEffect(() => {
+    if (!cityPreparing || !driveAlignmentReady) return;
+    setCityPreparing(false);
+    setDriveReady(true);
+  }, [cityPreparing, driveAlignmentReady]);
+  React.useEffect(() => {
+    if (!driveReady || !garageGateOpen || openingGate || !cityGateReady || !citySceneReady || cityMode) return;
+    P(null);
+    j(null);
+    p("hero");
+    q((previous) => ({ ...CAMERA_PRESETS[0], interior: false, seq: previous.seq + 1 }));
+    W(false);
+    n(null);
+    mg(false);
+    setCityHeadlightsOn(true);
+    setDriveReady(false);
+    setCityMode(true);
+  }, [driveReady, garageGateOpen, openingGate, cityGateReady, citySceneReady, cityMode]);
+  const exitCityDrive = React.useCallback(() => {
+    setCityMode(false);
+    setCityPreparing(false);
+    setDriveReady(false);
+    setCityHeadlightsOn(false);
+    stopCityDrive();
+    disposeAudio();
+  }, []);
+  const toggleCityHeadlights = React.useCallback(() => setCityHeadlightsOn((on) => !on), []);
   const toggleRaceLights = React.useCallback(() => {
     const next = !raceLightsRef.current;
     raceLightsRef.current = next;
@@ -326,7 +406,9 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [raceMode, toggleRaceLights, toggleRaceBodyGlow]);
   const beginRace = React.useCallback(() => {
-    if (!I || o || openingGate) return;
+    if (!I || o || openingGate || cityMode || cityPreparing) return;
+    setDriveReady(false);
+    setDriveAlignmentReady(false);
     selectRaceTrack(raceSetupMap);
     setEnvironment(raceSetupEnvironment);
     const automaticLights = raceSetupEnvironment !== 0;
@@ -345,6 +427,8 @@ export function App() {
     W(false);
     n(null);
     mg(!1);
+    // The race scene supplies its own exterior; hide the boulevard while the shutter opens.
+    setCityExteriorVisible(false);
     // Give the motorized shutter time to rise before handing over to the circuit.
     setGarageGateOpen(true);
     setOpeningGate(true);
@@ -353,8 +437,10 @@ export function App() {
       setOpeningGate(false);
       setRaceMode(true);
     }, 1350);
-  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment]);
+  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, cityMode, cityPreparing]);
   const exitRace = React.useCallback(() => {
+    setDriveReady(false);
+    setDriveAlignmentReady(false);
     lockRaceConditions(false);
     raceLightsRef.current = false;
     setRaceLightsOn(false);
@@ -367,6 +453,7 @@ export function App() {
     // device) while the showroom is on screen.
     disposeAudio();
     setGarageGateOpen(false);
+    setCityExteriorVisible(false);
     setOpeningGate(false);
     if (raceTransitionTimer.current !== null) {
       window.clearTimeout(raceTransitionTimer.current);
@@ -385,8 +472,22 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [raceMode]);
   const toggleGarageGate = React.useCallback(() => {
-    if (!openingGate && !raceMode) setGarageGateOpen((open) => !open);
-  }, [openingGate, raceMode]);
+    if (openingGate || raceMode || cityMode || cityPreparing) return;
+    if (!garageGateOpen) {
+      openGarageForCity();
+      return;
+    }
+    setGarageGateOpen(false);
+    setOpeningGate(true);
+    if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
+    raceTransitionTimer.current = window.setTimeout(() => {
+      raceTransitionTimer.current = null;
+      setOpeningGate(false);
+      setCityExteriorVisible(false);
+      setCityGateReady(false);
+      setCitySceneReady(false);
+    }, 1350);
+  }, [openingGate, raceMode, cityMode, cityPreparing, garageGateOpen, openGarageForCity]);
   const toggleGarageLights = React.useCallback(() => setGarageLightsOn((on) => !on), []);
   const toggleNeonLighting = React.useCallback(() => setNeonLightsOn((enabled) => !enabled), []);
   const toggleGurney = React.useCallback(() => {
@@ -410,7 +511,7 @@ export function App() {
     const x = (cA) => {
       // Race mode owns the keyboard: <RaceDirector/> reads WASD, Shift, Q and
       // Space, so showroom shortcuts would fight driving controls.
-      if (raceMode) return;
+      if (raceMode || cityMode || cityPreparing) return;
       if (
         cA.repeat ||
         cA.ctrlKey ||
@@ -441,7 +542,7 @@ export function App() {
                     : cA.key === "Escape" && (P(null), G.interior && KA("hero"));
     };
     return (window.addEventListener("keydown", x), () => window.removeEventListener("keydown", x));
-  }, [KA, G.interior, replayEntrance, raceMode, raceSetupOpen, toggleNeonLighting, toggleGurney]);
+  }, [KA, G.interior, replayEntrance, raceMode, cityMode, cityPreparing, raceSetupOpen, toggleNeonLighting, toggleGurney]);
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
@@ -504,7 +605,7 @@ export function App() {
               wheelSwatch={QA}
               interiorSwatch={z}
               matteCarbon={iA}
-              headlightsOn={raceMode ? raceLightsOn : Tg}
+              headlightsOn={cityMode ? cityHeadlightsOn : raceMode ? raceLightsOn : Tg}
               brakeLightsOn={hA}
               highDownforceGurney={nA}
               rollingRoad={$A}
@@ -512,14 +613,14 @@ export function App() {
               technicalView={BA}
               powerMode={WA}
               bodyGlowOn={raceMode ? raceBodyGlowOn : neonLightsOn}
-              interiorLightsOn={!raceMode && neonLightsOn}
-              showHotspotPins={Wg && !zg && !G.interior && !raceMode}
+              interiorLightsOn={!raceMode && !cityMode && neonLightsOn}
+              showHotspotPins={Wg && !zg && !G.interior && !raceMode && !cityMode}
             />
           </RaceVehicleRig>
         )}
         {!raceMode && (
           <>
-            <LiftDirector entranceSeq={E} />
+            <LiftDirector entranceSeq={E} onDriveAlignmentComplete={onCityDriveAlignmentComplete} />
             <Showroom
               theme={H}
               showAeroStreamlines={kA}
@@ -527,8 +628,14 @@ export function App() {
               rollingRoad={$A}
               garageGateOpen={garageGateOpen}
               garageLightsOn={garageLightsOn}
+              cityDriveMode={cityExteriorVisible}
             />
-            <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
+            <OpenCityWorld visible={cityExteriorVisible} driving={cityMode} onReady={onCitySceneReady} />
+            {cityMode ? (
+              <CityDriveDirector onExit={exitCityDrive} onToggleHeadlights={toggleCityHeadlights} />
+            ) : (
+              <CameraRig goal={G} autoOrbit={N} onUserInteract={userCameraInteraction} />
+            )}
           </>
         )}
       </Canvas>
@@ -541,6 +648,9 @@ export function App() {
       />
       {/* Race overlay. It reads the simulation through refs + a subscription, so
           the 60 fps numbers never re-render React or the canvas. */}
+      {cityMode && (
+        <CityHud headlightsOn={cityHeadlightsOn} onToggleHeadlights={toggleCityHeadlights} />
+      )}
       {raceMode && (
         <RaceHud
           onExit={exitRace}
@@ -662,7 +772,7 @@ export function App() {
             <button
               type="button"
               onClick={enterRace}
-              disabled={o || !I || openingGate}
+              disabled={o || !I || openingGate || cityMode || cityPreparing}
               className="atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border-[#DC1A22]/60 text-white bg-[#DC1A22]/20 hover:bg-[#DC1A22]/35"
               title="Choose a circuit and conditions before starting a race"
             >
@@ -671,12 +781,26 @@ export function App() {
             </button>
             <button
               type="button"
+              onClick={enterCityDrive}
+              disabled={o || !I || raceMode || cityPreparing}
+              aria-pressed={cityMode || driveReady}
+              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${cityMode || driveReady ? "border-sky-300/70 text-sky-100 bg-sky-300/20" : "border-sky-300/40 text-white bg-sky-300/10 hover:bg-sky-300/20"}`}
+              title={cityPreparing ? "The elevator is slowly turning the car toward the garage gate" : driveReady ? "The car is aligned. Open the garage gate to start driving" : cityMode ? "Turn city driving off and return the car to the garage" : "Turn on Drive to align the car, then open the gate to leave"}
+              aria-busy={cityPreparing}
+            >
+              <Power className={`w-3.5 h-3.5 ${cityMode || driveReady ? "text-sky-200" : "text-zinc-300"}`} />
+              <span className="font-mono-tech text-[10px] uppercase tracking-wider">
+                {cityPreparing ? "Turning…" : `Drive ${cityMode || driveReady ? "ON" : "OFF"}`}
+              </span>
+            </button>
+            <button
+              type="button"
               onClick={toggleGarageGate}
-              disabled={openingGate}
+              disabled={openingGate || raceMode || cityMode || cityPreparing}
               aria-label={garageGateOpen ? "Close Garage Gate" : "Open Garage Gate"}
               aria-pressed={garageGateOpen}
               className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${garageGateOpen ? "border-[#F5C518]/50 text-[#F5C518]" : "text-zinc-300 hover:text-white"}`}
-              title={garageGateOpen ? "Close the motorized garage gate" : "Open the motorized garage gate"}
+              title={driveReady && !garageGateOpen ? "Open the garage gate to let the aligned car drive outside" : garageGateOpen ? "Close the motorized garage gate" : "Open the motorized garage gate"}
             >
               {garageGateOpen ? <DoorOpen className="w-3.5 h-3.5" /> : <DoorClosed className="w-3.5 h-3.5" />}
               <span className="hidden md:inline font-mono-tech text-[10px] uppercase tracking-wider">Gate</span>
@@ -805,7 +929,7 @@ export function App() {
           <span className="font-mono-tech text-[10px] uppercase tracking-wider">Restore HUD [H]</span>
         </button>
       )}
-      {!zg && !raceMode && (
+      {!zg && !raceMode && !cityMode && !cityPreparing && (
         <AtelierPanel
           open={Mg}
           activeTab={tA}
@@ -855,7 +979,7 @@ export function App() {
           onResetBundledGlb={fA}
         />
       )}
-      {!zg && !raceMode && (
+      {!zg && !raceMode && !cityMode && !cityPreparing && (
         <ComponentDetailPanel
           componentId={V}
           specOverride={T}
@@ -889,7 +1013,7 @@ export function App() {
           onChangePowerMode={JA}
         />
       )}
-      {!zg && !raceMode && (
+      {!zg && !raceMode && !cityMode && !cityPreparing && (
         <footer className="fixed bottom-3 inset-x-3 z-20 flex flex-col items-center gap-2 pointer-events-none">
           <LiftStatus />
           <div className="h-7 flex items-center justify-center">
@@ -1079,7 +1203,7 @@ export function App() {
                 <button
                   type="button"
                   onClick={beginRace}
-                  disabled={o || !I || openingGate}
+                  disabled={o || !I || openingGate || cityMode || cityPreparing}
                   className="flex items-center gap-2 rounded-xl border border-[#DC1A22]/70 bg-[#DC1A22] px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] disabled:opacity-50 cursor-pointer"
                 ><Flag className="h-3.5 w-3.5" />Start Race</button>
               </div>

@@ -20,6 +20,7 @@ export type LiftPhase =
   | "settle" // locked at showroom level, brief pause
   | "showcase" // slow 360° presentation turn
   | "unwind" // user interrupted – ease back to the nearest aligned angle
+  | "drive-align" // slowly turn the elevator and car toward the open garage gate
   | "done";
 
 export const LIFT_TIMING = {
@@ -39,6 +40,8 @@ export const LIFT_TIMING = {
   ramp: 4,
   /** never wait longer than this for shader warm-up before starting */
   maxArmWait: 3,
+  /** seconds for the turntable to face the open garage gate before city driving */
+  driveAlign: 3.8,
 } as const;
 
 export interface LiftSnapshot {
@@ -92,6 +95,10 @@ export class LiftTimeline {
   private skipRequested = false;
   private unwindTarget = 0;
   private unwindSpeed = 0;
+  private driveAlignStartYaw = 0;
+  private driveAlignDelta = 0;
+  private driveAlignTargetYaw = Math.PI;
+  private driveAlignStartY = 0;
 
   // ---- React-facing snapshot (throttled)
   private listeners = new Set<Listener>();
@@ -131,6 +138,7 @@ export class LiftTimeline {
   }
 
   pauseShowcase() {
+    if (this.phase === "drive-align") return;
     if (this.atTop) {
       // Manual navigation takes over at the current angle, without a fast unwind.
       this.phase = "done";
@@ -138,6 +146,44 @@ export class LiftTimeline {
     } else {
       this.skipRequested = true;
     }
+  }
+
+  /** Settle the display lift before handing its vehicle to the open-road driver. */
+  prepareForDrive() {
+    this.y = 0;
+    this.yaw = 0;
+    this.phase = "done";
+    this.skipRequested = false;
+    this.t = 0;
+    this.publish(true);
+  }
+
+  /**
+   * Slowly turn the lift and car to face the positive-Z garage exit. Returns
+   * true while an animation is needed; false means the lift was already aligned.
+   */
+  alignForDrive(targetYaw = Math.PI) {
+    const tau = Math.PI * 2;
+    let delta = targetYaw - this.yaw;
+    delta = ((delta + Math.PI) % tau + tau) % tau - Math.PI;
+    if (Math.abs(delta) < 0.0015 && Math.abs(this.y) < 0.0015) {
+      this.y = 0;
+      this.yaw = targetYaw;
+      this.phase = "done";
+      this.t = 0;
+      this.skipRequested = false;
+      this.publish(true);
+      return false;
+    }
+    this.driveAlignStartYaw = this.yaw;
+    this.driveAlignDelta = delta;
+    this.driveAlignTargetYaw = targetYaw;
+    this.driveAlignStartY = this.y;
+    this.t = 0;
+    this.phase = "drive-align";
+    this.skipRequested = false;
+    this.publish(true);
+    return true;
   }
 
   /**
@@ -230,6 +276,21 @@ export class LiftTimeline {
         break;
       }
 
+      case "drive-align": {
+        this.t += dt;
+        const progress = smootherstep(this.t / LIFT_TIMING.driveAlign);
+        this.y = this.driveAlignStartY * (1 - progress);
+        this.yaw = this.driveAlignStartYaw + this.driveAlignDelta * progress;
+        if (this.t >= LIFT_TIMING.driveAlign) {
+          this.y = 0;
+          this.yaw = this.driveAlignTargetYaw;
+          this.phase = "done";
+          this.t = 0;
+          this.publish(true);
+        }
+        break;
+      }
+
       case "unwind": {
         // Velocity-limited approach: accelerate gently to at most ~60°/s, then
         // settle exponentially into the aligned orientation – never a snap.
@@ -266,6 +327,8 @@ export class LiftTimeline {
         return this.t / LIFT_TIMING.settle;
       case "showcase":
         return this.yaw / TAU;
+      case "drive-align":
+        return smootherstep(this.t / LIFT_TIMING.driveAlign);
       case "unwind":
         return 1;
       case "done":

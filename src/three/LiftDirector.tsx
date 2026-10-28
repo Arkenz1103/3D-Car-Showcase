@@ -6,9 +6,11 @@ import { markShadowsDirty } from "./sceneMotion";
 interface LiftDirectorProps {
   /** Incremented every time a vehicle asset finishes loading → replays the entrance. */
   entranceSeq: number;
+  /** Called once the elevator has slowly aligned the car with the garage exit. */
+  onDriveAlignmentComplete?: () => void;
 }
 
-export function LiftDirector({ entranceSeq }: LiftDirectorProps) {
+export function LiftDirector({ entranceSeq, onDriveAlignmentComplete }: LiftDirectorProps) {
   const invalidate = useThree((s) => s.invalidate);
   const resumed = useRef(false);
 
@@ -35,7 +37,9 @@ export function LiftDirector({ entranceSeq }: LiftDirectorProps) {
   useFrame((_, delta) => {
     if (document.hidden) return;
     const wasMoving = liftTimeline.animating;
+    const wasDriveAligning = liftTimeline.phase === "drive-align";
     const moving = liftTimeline.step(resumed.current ? 0 : delta);
+    if (wasDriveAligning && liftTimeline.phase === "done") onDriveAlignmentComplete?.();
     resumed.current = false;
     if (wasMoving) markShadowsDirty();
     if (moving) invalidate();

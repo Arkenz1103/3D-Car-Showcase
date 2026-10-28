@@ -106,7 +106,7 @@ function GarageGate({ open }) {
   );
 }
 
-function ExteriorApron() {
+function ExteriorApron({ cityDriveMode = false }) {
   return (
     <group name="Circuit_Outside_Garage">
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.025, HALL_WIDTH + 13]} raycast={() => null}>
@@ -130,6 +130,7 @@ function ExteriorApron() {
         </mesh>
       ))}
       <mesh
+        visible={!cityDriveMode}
         position={[0, 5.2, HALL_WIDTH + 26]}
         rotation={[0, Math.PI, 0]}
         raycast={() => null}
@@ -467,6 +468,7 @@ export const Showroom = React.memo(
     rollingRoad: I,
     garageGateOpen = false,
     garageLightsOn = true,
+    cityDriveMode = false,
   }) => {
     const E = useThree((M) => M.gl),
       e = React.useMemo(() => {
@@ -507,6 +509,8 @@ export const Showroom = React.memo(
     }, [Q]);
     return (
       <>
+        {/* Keep the garage's original world background and fog when the shutter
+            opens. The city supplies a local sky backdrop inside the doorway. */}
         <color attach="background" args={[Q.bgHex]} />
         <fog attach="fog" args={[Q.fogHex, 22, 55]} />
         <group name="Maranello_Architectural_Showroom">
@@ -632,7 +636,7 @@ export const Showroom = React.memo(
               />
             </mesh>
             <GarageGate open={garageGateOpen} />
-            <ExteriorApron />
+            <ExteriorApron cityDriveMode={cityDriveMode} />
             <mesh position={[0, HALL_HEIGHT / 2, -HALL_WIDTH]} raycast={() => null}>
               <planeGeometry args={[HALL_LENGTH * 2, HALL_HEIGHT]} />
               <meshStandardMaterial

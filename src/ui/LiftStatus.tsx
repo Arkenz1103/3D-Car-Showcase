@@ -10,6 +10,7 @@ const LABELS: Record<LiftPhase, { title: string; hint: string }> = {
   settle: { title: "Platform Locked", hint: "Showroom level reached" },
   showcase: { title: "360° Showcase", hint: "Slow presentation turn" },
   unwind: { title: "Turntable", hint: "Aligning to hero view" },
+  "drive-align": { title: "Turntable Aligning", hint: "Turning toward garage exit" },
   done: { title: "Turntable", hint: "Presentation complete" },
 };
 
@@ -40,7 +41,7 @@ export function LiftStatus() {
   if (!visible) return null;
 
   const label = LABELS[snap.phase];
-  const isShowcase = snap.phase === "showcase" || snap.phase === "unwind";
+  const isShowcase = snap.phase === "showcase" || snap.phase === "unwind" || snap.phase === "drive-align";
   const skippable = snap.phase === "ascending" || snap.phase === "settle" || snap.phase === "showcase";
   const pct = Math.round(snap.progress * 100);
   const accent = isShowcase ? "#F5C518" : "#DC1A22";
@@ -57,7 +58,7 @@ export function LiftStatus() {
         style={{ backgroundColor: `${accent}22`, color: accent }}
       >
         {isShowcase ? (
-          <RotateCw className="h-3.5 w-3.5 animate-spin" style={{ animationDuration: "37.5s" }} />
+          <RotateCw className="h-3.5 w-3.5 animate-spin" style={{ animationDuration: snap.phase === "drive-align" ? "7.6s" : "37.5s" }} />
         ) : (
           <ChevronsUp className="h-3.5 w-3.5" />
         )}
