@@ -91,7 +91,7 @@ function createRoadGeometry(paths) {
 }
 
 /** Static, R3F-managed instance batches keep the city draw-call count bounded. */
-function InstanceField({ items, geometryType = "box", materialColor = "#ffffff", roughness = 0.8, metalness = 0.05, emissive = "#000000", emissiveIntensity = 0, castShadow = false }) {
+function InstanceField({ items, geometryType = "box", materialColor = "#ffffff", roughness = 0.8, metalness = 0.05, emissive = "#000000", emissiveIntensity = 0, castShadow = false, fog = false }) {
   const mesh = useRef(null);
   const geometry = useMemo(() => {
     if (geometryType === "cylinder") return new CylinderGeometry(0.5, 0.5, 1, 8);
@@ -99,7 +99,7 @@ function InstanceField({ items, geometryType = "box", materialColor = "#ffffff",
     if (geometryType === "cone") return new ConeGeometry(1, 1, 7, 2);
     return new BoxGeometry(1, 1, 1);
   }, [geometryType]);
-  const material = useMemo(() => new MeshStandardMaterial({ color: materialColor, roughness, metalness, emissive, emissiveIntensity }), [materialColor, roughness, metalness, emissive, emissiveIntensity]);
+  const material = useMemo(() => new MeshStandardMaterial({ color: materialColor, roughness, metalness, emissive, emissiveIntensity, fog }), [materialColor, roughness, metalness, emissive, emissiveIntensity, fog]);
 
   useLayoutEffect(() => {
     const target = mesh.current;
@@ -152,9 +152,9 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
   // only after the car and chase camera have cleared the doorway.
   useFrame(() => {
     const outside = driving && cityDrive.z > 19;
-    if (ambient.current) ambient.current.intensity = outside ? 0.48 : 0;
-    if (hemisphere.current) hemisphere.current.intensity = outside ? 1.05 : 0;
-    if (sun.current) sun.current.intensity = outside ? 2.2 : 0;
+    if (ambient.current) ambient.current.intensity = outside ? 0.72 : 0;
+    if (hemisphere.current) hemisphere.current.intensity = outside ? 1.25 : 0;
+    if (sun.current) sun.current.intensity = outside ? 3.0 : 0;
   }, -18);
 
   // The city is visible from the ordinary garage camera before Drive is on;
@@ -217,22 +217,22 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
           comes up only after the car and chase camera have cleared the doorway. */}
       <ambientLight ref={ambient} intensity={0} color="#e3f1ff" />
       <hemisphereLight ref={hemisphere} args={["#a9d5f2", "#394536", 0]} />
-      <directionalLight ref={sun} position={[-42, 72, 48]} intensity={0} color="#fff1d6" />
+      <directionalLight ref={sun} position={[-42, 72, -48]} intensity={0} color="#fff1d6" />
 
       <mesh name="City_Ground" position={[0, -0.25, CITY_GROUND_CENTER_Z]} raycast={() => null}>
         <boxGeometry args={[470, 0.35, CITY_GROUND_LENGTH]} />
-        <meshStandardMaterial color="#737d6d" roughness={1} />
+        <meshStandardMaterial color="#737d6d" roughness={1} fog={false} />
       </mesh>
       <mesh name="City_Ocean" position={[180, -0.54, 285]} raycast={() => null}>
         <boxGeometry args={[160, 1.0, 340]} />
-        <meshStandardMaterial color="#368b9d" roughness={0.28} metalness={0.08} />
+        <meshStandardMaterial color="#368b9d" roughness={0.28} metalness={0.08} fog={false} />
       </mesh>
       <mesh name="Beach_Sand" position={[130, -0.045, 165]} raycast={() => null}>
         <boxGeometry args={[44, 0.12, 100]} />
-        <meshStandardMaterial color="#d7c59a" roughness={0.95} />
+        <meshStandardMaterial color="#d7c59a" roughness={0.95} fog={false} />
       </mesh>
       <mesh name="City_Road_Network" geometry={roadGeometry} raycast={() => null}>
-        <meshStandardMaterial color="#292e32" roughness={0.93} metalness={0.02} side={DoubleSide} />
+        <meshStandardMaterial color="#292e32" roughness={0.93} metalness={0.02} side={DoubleSide} fog={false} />
       </mesh>
 
       {/* Broad asphalt junctions make turns comfortable at every city crossing. */}
@@ -254,22 +254,22 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
       {[-1, 1].map((side) => (
         <mesh key={`boulevard-curb-${side}`} position={[side * 9.1, 0.065, CITY_CENTER_Z]} raycast={() => null}>
           <boxGeometry args={[0.22, 0.22, CITY_LENGTH]} />
-          <meshStandardMaterial color="#d2d0c8" roughness={0.86} />
+          <meshStandardMaterial color="#d2d0c8" roughness={0.86} fog={false} />
         </mesh>
       ))}
       <mesh position={[0, 0.065, 41]} raycast={() => null}>
         <boxGeometry args={[17.6, 0.018, 0.18]} />
-        <meshBasicMaterial color="#eee7d8" />
+        <meshBasicMaterial color="#eee7d8" fog={false} />
       </mesh>
       {[-1, 1].map((side) => (
         <group key={`city-entry-marker-${side}`} position={[side * 15.9, 0, 42]}>
           <mesh position={[0, 1.05, 0]} raycast={() => null}>
             <boxGeometry args={[0.42, 2.1, 0.42]} />
-            <meshStandardMaterial color="#424c52" metalness={0.62} roughness={0.42} />
+            <meshStandardMaterial color="#424c52" metalness={0.62} roughness={0.42} fog={false} />
           </mesh>
           <mesh position={[0, 2.15, 0]} raycast={() => null}>
             <boxGeometry args={[0.72, 0.22, 0.72]} />
-            <meshStandardMaterial color="#d8a84e" emissive="#8f611d" emissiveIntensity={0.45} />
+            <meshStandardMaterial color="#d8a84e" emissive="#8f611d" emissiveIntensity={0.45} fog={false} />
           </mesh>
         </group>
       ))}

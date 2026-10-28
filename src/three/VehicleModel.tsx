@@ -825,14 +825,12 @@ export const VehicleModel = React.memo(
             };
             BA.baseEmissiveIntensity = MA[K];
           }
+          // Component selection still drives the detail panel/hotspot, but does
+          // not tint the vehicle red in the garage view.
           BA.material.emissive.copy(BA.baseEmissive);
           BA.material.emissiveIntensity = BA.baseEmissiveIntensity;
-          if (A === BA.componentId) {
-            BA.material.emissive.lerp(QA, 0.72);
-            BA.material.emissiveIntensity = Math.max(BA.baseEmissiveIntensity, 0.42);
-          }
         }
-      }, [L, h, V, K, A]));
+      }, [L, h, V, K]));
     const gA = (BA) => {
         for (const MA of BA.intersections) {
           const WA = MA.object;
@@ -860,7 +858,6 @@ export const VehicleModel = React.memo(
         }
         return null;
       },
-      QA = React.useMemo(() => new Color("#FF2A32"), []),
       CA = React.useRef(null),
       shaderWarmups = React.useRef(new WeakMap()),
       [z, IA] = React.useState(!1),
