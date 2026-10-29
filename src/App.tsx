@@ -696,6 +696,10 @@ export function App() {
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
+  const runToolbarAction = (event, action) => {
+    event.currentTarget.closest("details")?.removeAttribute("open");
+    action();
+  };
   const startGame = React.useCallback(() => {
     setStartGameLoading(true);
     l(true);
@@ -898,227 +902,229 @@ export function App() {
         </div>
       )}
       {!zg && !raceMode && (
-        <header className="fixed top-0 inset-x-0 z-30 px-3 sm:px-5 py-3 flex items-center justify-between gap-3 pointer-events-none">
-          <div className="pointer-events-auto min-w-0 flex items-center gap-3 atelier-pill px-3.5 py-2 rounded-2xl">
-            <div className="flex flex-col gap-[2px] w-1">
-              <span className="h-2 bg-[#009246] rounded-full" />
-              <span className="h-2 bg-white rounded-full" />
-              <span className="h-2 bg-[#CE2B37] rounded-full" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="font-display text-sm sm:text-base font-bold tracking-tight text-white uppercase truncate">
-                  {g.brand} {g.model}
-                </h1>
-                <span
-                  className="hidden xl:inline-block font-mono-tech text-[10px] px-1.5 py-0.5 rounded border"
-                  style={{
-                    backgroundColor: `${g.accentHex}22`,
-                    color: g.accentHex,
-                    borderColor: `${g.accentHex}66`,
-                  }}
-                >
-                  {g.year}
-                </span>
+        <header className="fixed top-0 inset-x-0 z-30 px-2 sm:px-4 py-2 pointer-events-none">
+          <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between gap-2 sm:gap-3">
+            <div className="hidden xl:flex min-w-0 max-w-[260px] shrink items-center gap-3 rounded-2xl atelier-pill px-3 py-2 pointer-events-auto">
+              <div className="flex w-1 shrink-0 flex-col gap-[2px]">
+                <span className="h-2 rounded-full bg-[#009246]" />
+                <span className="h-2 rounded-full bg-white" />
+                <span className="h-2 rounded-full bg-[#CE2B37]" />
               </div>
-              <div className="flex items-center gap-2 text-[10px] font-mono-tech text-zinc-400">
-                <span className="truncate max-w-[180px] sm:max-w-none">{g.tagline}</span>
-                <span>·</span>
-                <button
-                  type="button"
-                  onClick={() => wg("asset")}
-                  className="text-[#F5C518] hover:underline cursor-pointer truncate max-w-[205px] sm:max-w-none"
-                  title="Inspect 3D GLB Asset Provenance or Hot-Swap .GLB File"
-                >
-                  {I?.isBundledReference
-                    ? `REF GLB (${I.meshCount} Meshes · Replaceable)`
-                    : `CUSTOM GLB (${I?.meshCount ?? 0} Meshes)`}
-                </button>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <h1 className="truncate font-display text-sm font-bold uppercase tracking-tight text-white">
+                    {g.brand} {g.model}
+                  </h1>
+                  <span className="hidden 2xl:inline font-mono-tech text-[9px] text-zinc-500">{g.year}</span>
+                </div>
+                <div className="truncate font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">
+                  {g.shortName || g.shortTitle || g.tagline}
+                </div>
               </div>
             </div>
-          </div>
-          <div className="hidden 2xl:flex items-center gap-1 atelier-pill p-1 rounded-2xl pointer-events-auto">
-            {CARS.map((x) => {
-              const cA = x.id === Q;
-              return (
+
+            <nav aria-label="Showroom navigation" className="pointer-events-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
+              <div role="group" aria-label="Race and driving" className="atelier-pill flex shrink-0 items-center gap-0.5 rounded-xl p-1">
                 <button
-                  key={x.id}
                   type="button"
-                  onClick={() => SA(x.id)}
-                  disabled={o}
-                  className={`px-3 py-1.5 rounded-xl text-left transition-all cursor-pointer disabled:opacity-60 ${cA ? "bg-white text-black shadow" : "text-zinc-300 hover:text-white hover:bg-white/8"}`}
+                  onClick={enterRace}
+                  disabled={o || !I || openingGate || cityMode || cityPreparing}
+                  aria-label="Choose a race"
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-[#DC1A22]/60 bg-[#DC1A22]/20 px-2.5 text-white transition-colors hover:bg-[#DC1A22]/35 disabled:opacity-50 sm:px-3"
+                  title="Choose a circuit, weather and difficulty before starting"
                 >
-                  <div className="font-mono-tech text-[9px] uppercase tracking-[0.16em] opacity-70">
-                    {x.brand}
-                  </div>
-                  <div className="font-display text-xs font-semibold leading-tight whitespace-nowrap">
-                    {x.shortTitle}
-                  </div>
+                  <Flag className="h-3.5 w-3.5 text-[#F87171]" />
+                  <span className="font-mono-tech text-[9px] font-semibold uppercase tracking-wider">{openingGate ? "Opening…" : "Race"}</span>
                 </button>
-              );
-            })}
-          </div>
-          <div className="pointer-events-auto shrink-0 flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={enterRace}
-              disabled={o || !I || openingGate || cityMode || cityPreparing}
-              className="atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 border-[#DC1A22]/60 text-white bg-[#DC1A22]/20 hover:bg-[#DC1A22]/35"
-              title="Choose a circuit and conditions before starting a race"
-            >
-              <Flag className="w-3.5 h-3.5 text-[#DC1A22]" />
-              <span className="font-mono-tech text-[10px] uppercase tracking-wider">{openingGate ? "Opening…" : "Race"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={enterCityDrive}
-              disabled={o || !I || raceMode || cityPreparing || !liftStartRequested}
-              aria-pressed={cityMode || driveReady}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${cityMode || driveReady ? "border-sky-300/70 text-sky-100 bg-sky-300/20" : "border-sky-300/40 text-white bg-sky-300/10 hover:bg-sky-300/20"}`}
-              title={!liftStartRequested ? "Click Lift the Car before enabling Drive" : cityPreparing ? "The elevator is slowly turning the car toward the garage gate" : driveReady ? "The car is aligned. Open the garage gate to start driving" : cityMode ? "Turn city driving off and return the car to the garage" : "Turn on Drive to align the car, then open the gate to leave"}
-              aria-busy={cityPreparing}
-            >
-              <Power className={`w-3.5 h-3.5 ${cityMode || driveReady ? "text-sky-200" : "text-zinc-300"}`} />
-              <span className="font-mono-tech text-[10px] uppercase tracking-wider">
-                {cityPreparing ? "Turning…" : `Drive ${cityMode || driveReady ? "ON" : "OFF"}`}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleGarageGate}
-              disabled={openingGate || raceMode || cityMode || cityPreparing}
-              aria-label={garageGateOpen ? "Close Garage Gate" : "Open Garage Gate"}
-              aria-pressed={garageGateOpen}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 ${garageGateOpen ? "border-[#F5C518]/50 text-[#F5C518]" : "text-zinc-300 hover:text-white"}`}
-              title={driveReady && !garageGateOpen ? "Open the garage gate to let the aligned car drive outside" : garageGateOpen ? "Close the motorized garage gate" : "Open the motorized garage gate"}
-            >
-              {garageGateOpen ? <DoorOpen className="w-3.5 h-3.5" /> : <DoorClosed className="w-3.5 h-3.5" />}
-              <span className="hidden md:inline font-mono-tech text-[10px] uppercase tracking-wider">Gate</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleGarageLights}
-              aria-label={garageLightsOn ? "Turn garage lights off" : "Turn garage lights on"}
-              aria-pressed={garageLightsOn}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${garageLightsOn ? "text-[#F5C518]" : "border-[#E04BFF]/60 text-[#E7B5FF] bg-[#8A16A5]/15"}`}
-              title={garageLightsOn ? "Switch off the garage lights to show the underglow" : "Switch the garage lights back on"}
-            >
-              {garageLightsOn ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-              <span className="hidden xl:inline font-mono-tech text-[10px] uppercase tracking-wider">
-                {garageLightsOn ? "Garage Lights" : "Garage Dark"}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleGarageMusic}
-              aria-label={garageMusicOn ? "Turn garage theme music off" : "Turn garage theme music on"}
-              aria-pressed={garageMusicOn}
-              className={`atelier-pill p-2 rounded-xl transition-all cursor-pointer ${garageMusicOn ? "border-[#F5C518]/60 text-[#F5C518] bg-[#F5C518]/10" : "text-zinc-400 hover:text-white"}`}
-              title={garageMusicOn ? "Garage theme music on — click to mute" : "Garage theme music off — click to play"}
-            >
-              {garageMusicOn ? <Music2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-              <span className="hidden 2xl:inline font-mono-tech text-[10px] uppercase tracking-wider">Music</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => wg("garage")}
-              className={`2xl:hidden atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${Mg && tA === "garage" ? "border-white/35 text-white bg-white/14" : "text-zinc-300 hover:text-white"}`}
-              title="Switch Supercar"
-            >
-              <span className="font-mono-tech text-[10px] uppercase">Garage</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => wg("customize")}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${Mg && tA === "customize" ? "border-white/35 text-white bg-white/14" : "text-zinc-300 hover:text-white"}`}
-              title="Open Tailor Made Paint & Finish Configurator"
-            >
-              <Palette className="w-3.5 h-3.5 text-[#DC1A22]" />
-              <span className="hidden sm:inline">Atelier</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => wg("systems")}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${Mg && tA === "systems" ? "border-white/35 text-white bg-white/14" : "text-zinc-300 hover:text-white"}`}
-              title="Technical Views, Active Aero & Powertrain Controls"
-            >
-              <SlidersVertical className="w-3.5 h-3.5 text-[#F5C518]" />
-              <span className="hidden sm:inline">Tech Lab</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => wg("asset")}
-              className={`atelier-pill px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer ${Mg && tA === "asset" ? "border-[#F5C518]/60 text-white bg-white/14" : "text-zinc-300 hover:text-white"}`}
-              title="3D GLB Asset Info & Hot-Swap Custom Model"
-            >
-              <Box className="w-3.5 h-3.5 text-[#F5C518]" />
-              <span className="hidden 2xl:inline">GLB</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => MA((x) => (x === "xray" ? "solid" : "xray"))}
-              className={`atelier-pill px-3 py-2 rounded-xl font-mono-tech text-[11px] uppercase flex items-center gap-1.5 transition-all cursor-pointer ${BA === "xray" ? "border-[#F5C518] text-[#F5C518] bg-[#F5C518]/15" : "text-zinc-300 hover:text-white"}`}
-              title="Toggle Powertrain X-Ray Cutaway [Key: X]"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span className="hidden 2xl:inline">X-Ray</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => XA((x) => !x)}
-              className={`atelier-pill px-3 py-2 rounded-xl font-mono-tech text-[11px] uppercase flex items-center gap-1.5 transition-all cursor-pointer ${Tg ? "border-[#F5C518] text-[#F5C518] bg-[#F5C518]/15" : "text-zinc-400 hover:text-white"}`}
-              title="Toggle Matrix LED Headlights & Tail Lights"
-              aria-label="Toggle car lights"
-              aria-pressed={Tg}
-            >
-              <Lightbulb className="w-3.5 h-3.5" />
-              <span className="hidden 2xl:inline">{Tg ? "Lights On" : "Lights Off"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleNeonLighting}
-              className={`atelier-pill px-3 py-2 rounded-xl font-mono-tech text-[10px] uppercase flex items-center gap-1.5 transition-all cursor-pointer ${neonLightsOn ? "border-[#E04BFF] text-[#F19BFF] bg-[#B000FF]/15" : "text-zinc-300 hover:text-white"}`}
-              title="Toggle violet underglow and cockpit ambient lighting [Key: L]"
-              aria-label="Toggle Underglow and cockpit lighting"
-              aria-pressed={neonLightsOn}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#E04BFF]" />
-              <span>Underglow [L]</span>
-            </button>
-            <button
-              type="button"
-              onClick={toggleOrbit}
-              className={`atelier-pill p-2 rounded-xl transition-all cursor-pointer ${N ? "border-[#DC1A22] text-white bg-[#DC1A22]/25" : "text-zinc-400 hover:text-white"}`}
-              title="Toggle 360° Turntable Auto-Orbit"
-              aria-label="Toggle 360-degree orbit"
-              aria-pressed={N}
-            >
-              <RotateCw
-                className={`w-4 h-4 ${N ? "animate-spin" : ""}`}
-                style={{
-                  animationDuration: "8s",
+                <button
+                  type="button"
+                  onClick={enterCityDrive}
+                  disabled={o || !I || raceMode || cityPreparing || !liftStartRequested}
+                  aria-pressed={cityMode || driveReady}
+                  aria-label={cityPreparing ? "Turning car toward the garage" : `Drive ${cityMode || driveReady ? "on" : "off"}`}
+                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors disabled:opacity-50 sm:px-3 ${cityMode || driveReady ? "bg-sky-300/20 text-sky-100" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+                  title={!liftStartRequested ? "Click Lift the Car before enabling Drive" : cityPreparing ? "The elevator is turning the car toward the garage gate" : driveReady ? "The car is aligned. Open the garage gate to start driving" : cityMode ? "Turn city driving off and return the car to the garage" : "Turn on Drive to align the car, then open the gate to leave"}
+                  aria-busy={cityPreparing}
+                >
+                  <Power className={`h-3.5 w-3.5 ${cityMode || driveReady ? "text-sky-200" : "text-zinc-400"}`} />
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider sm:inline">
+                    {cityPreparing ? "Turning…" : `Drive ${cityMode || driveReady ? "ON" : "OFF"}`}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleGarageGate}
+                  disabled={openingGate || raceMode || cityMode || cityPreparing}
+                  aria-label={garageGateOpen ? "Close garage gate" : "Open garage gate"}
+                  aria-pressed={garageGateOpen}
+                  className={`hidden h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors disabled:opacity-50 sm:flex sm:px-3 ${garageGateOpen ? "bg-[#F5C518]/10 text-[#F5C518]" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+                  title={driveReady && !garageGateOpen ? "Open the garage gate to let the aligned car drive outside" : garageGateOpen ? "Close the motorized garage gate" : "Open the motorized garage gate"}
+                >
+                  {garageGateOpen ? <DoorOpen className="h-3.5 w-3.5" /> : <DoorClosed className="h-3.5 w-3.5" />}
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider md:inline">Gate</span>
+                </button>
+              </div>
+
+              <div aria-hidden="true" className="hidden h-7 w-px bg-white/15 sm:block" />
+
+              <div role="group" aria-label="Studio sections" className="atelier-pill hidden shrink-0 items-center gap-0.5 rounded-xl p-1 sm:flex">
+                <button
+                  type="button"
+                  onClick={() => wg("garage")}
+                  aria-label="Garage and car selection"
+                  aria-pressed={Mg && tA === "garage"}
+                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors sm:px-3 ${Mg && tA === "garage" ? "bg-white/14 text-white" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+                  title="Garage and vehicle selection"
+                >
+                  <DoorClosed className="h-3.5 w-3.5" />
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider md:inline">Garage</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => wg("customize")}
+                  aria-label="Open Atelier paint and finish"
+                  aria-pressed={Mg && tA === "customize"}
+                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors sm:px-3 ${Mg && tA === "customize" ? "bg-white/14 text-white" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+                  title="Paint and finish configurator"
+                >
+                  <Palette className="h-3.5 w-3.5 text-[#DC1A22]" />
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider md:inline">Atelier</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => wg("systems")}
+                  aria-label="Open Tech Lab"
+                  aria-pressed={Mg && tA === "systems"}
+                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2.5 transition-colors sm:px-3 ${Mg && tA === "systems" ? "bg-white/14 text-white" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+                  title="Technical views, active aero and powertrain controls"
+                >
+                  <SlidersVertical className="h-3.5 w-3.5 text-[#F5C518]" />
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider md:inline">Tech Lab</span>
+                </button>
+              </div>
+            </nav>
+
+            <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+              <details
+                className="relative"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.currentTarget.removeAttribute("open");
+                    event.currentTarget.querySelector("summary")?.focus();
+                  }
                 }}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={replayEntrance}
-              disabled={o || !I}
-              className="atelier-pill px-3 py-2 rounded-xl text-zinc-300 hover:text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-              title="Lift the car with hydraulic ascent audio and begin the 360° showcase"
-              aria-label="Lift the Car"
-            >
-              <ChevronsUp className="w-4 h-4 text-[#F5C518]" />
-              <span className="font-mono-tech text-[10px] uppercase tracking-wider">Lift the Car</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => $(!0)}
-              className="atelier-pill p-2 rounded-xl text-zinc-400 hover:text-white transition-colors cursor-pointer"
-              title="Pure Cinema Mode — Hide UI [Key: H]"
-            >
-              <Maximize2 className="w-4 h-4" />
-            </button>
+              >
+                <summary
+                  aria-label="Open vehicle and showroom controls"
+                  className="atelier-pill flex h-10 list-none cursor-pointer select-none items-center gap-1.5 rounded-xl px-2.5 text-zinc-300 transition-colors hover:text-white [&::-webkit-details-marker]:hidden sm:px-3"
+                  title="Vehicle, lighting and showcase controls"
+                >
+                  <SlidersVertical className="h-4 w-4 text-[#F5C518]" />
+                  <span className="hidden font-mono-tech text-[9px] uppercase tracking-wider sm:inline">Controls</span>
+                  <span aria-hidden="true" className="text-[10px] text-zinc-500">⌄</span>
+                </summary>
+                <div className="atelier-panel absolute right-0 top-full z-[60] mt-2 max-h-[min(76vh,36rem)] w-[min(22rem,calc(100vw_-_1rem))] overflow-y-auto rounded-2xl border border-white/12 p-3 shadow-[0_20px_70px_rgba(0,0,0,0.65)]">
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-white/10 pb-2">
+                    <div>
+                      <div className="font-mono-tech text-[9px] uppercase tracking-[0.2em] text-[#F5C518]">Showroom controls</div>
+                      <div className="mt-1 text-xs text-zinc-500">Vehicle, lighting and display</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(event) => runToolbarAction(event, () => {})}
+                      className="grid h-8 w-8 place-items-center rounded-lg text-lg leading-none text-zinc-400 transition-colors hover:bg-white/8 hover:text-white"
+                      aria-label="Close showroom controls"
+                    >×</button>
+                  </div>
+
+                  <div className="mb-3 sm:hidden">
+                    <div className="mb-2 font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">Studio sections</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button type="button" onClick={(event) => runToolbarAction(event, () => wg("garage"))} aria-pressed={Mg && tA === "garage"} className="flex min-w-0 flex-col items-center gap-1 rounded-lg border border-white/8 bg-black/15 px-1.5 py-2 text-[10px] text-zinc-200 hover:border-white/20">
+                        <DoorClosed className="h-4 w-4" /><span>Garage</span>
+                      </button>
+                      <button type="button" onClick={(event) => runToolbarAction(event, () => wg("customize"))} aria-pressed={Mg && tA === "customize"} className="flex min-w-0 flex-col items-center gap-1 rounded-lg border border-white/8 bg-black/15 px-1.5 py-2 text-[10px] text-zinc-200 hover:border-white/20">
+                        <Palette className="h-4 w-4 text-[#DC1A22]" /><span>Atelier</span>
+                      </button>
+                      <button type="button" onClick={(event) => runToolbarAction(event, () => wg("systems"))} aria-pressed={Mg && tA === "systems"} className="flex min-w-0 flex-col items-center gap-1 rounded-lg border border-white/8 bg-black/15 px-1.5 py-2 text-[10px] text-zinc-200 hover:border-white/20">
+                        <SlidersVertical className="h-4 w-4 text-[#F5C518]" /><span>Tech Lab</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="mb-2 font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">Select vehicle</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {CARS.map((car) => {
+                        const selected = car.id === Q;
+                        return (
+                          <button
+                            key={car.id}
+                            type="button"
+                            onClick={(event) => runToolbarAction(event, () => SA(car.id))}
+                            disabled={o}
+                            aria-pressed={selected}
+                            className={`min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors disabled:opacity-50 ${selected ? "border-[#F5C518]/60 bg-[#F5C518]/10 text-white" : "border-white/8 bg-black/15 text-zinc-300 hover:border-white/20 hover:text-white"}`}
+                          >
+                            <span className="block truncate font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{car.brand}</span>
+                            <span className="mt-0.5 block truncate font-display text-[11px] font-semibold">{car.shortTitle}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="mb-2 font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">Quick controls</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button type="button" onClick={(event) => runToolbarAction(event, toggleGarageGate)} disabled={openingGate || raceMode || cityMode || cityPreparing} aria-pressed={garageGateOpen} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5 disabled:opacity-50 sm:hidden">
+                      {garageGateOpen ? <DoorOpen className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" /> : <DoorClosed className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
+                      <span className="min-w-0"><span className="block truncate">Garage gate</span><span className="block text-[9px] text-zinc-500">{garageGateOpen ? "Open" : "Closed"}</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, toggleGarageLights)} aria-pressed={garageLightsOn} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      {garageLightsOn ? <Sun className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" /> : <Moon className="h-3.5 w-3.5 shrink-0 text-[#E7B5FF]" />}
+                      <span className="min-w-0"><span className="block truncate">Garage lights</span><span className="block text-[9px] text-zinc-500">{garageLightsOn ? "On" : "Off"}</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, toggleGarageMusic)} aria-pressed={garageMusicOn} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      {garageMusicOn ? <Music2 className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" /> : <VolumeX className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
+                      <span className="min-w-0"><span className="block truncate">Garage music</span><span className="block text-[9px] text-zinc-500">{garageMusicOn ? "On" : "Muted"}</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, () => XA((value) => !value))} aria-pressed={Tg} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      <Lightbulb className={`h-3.5 w-3.5 shrink-0 ${Tg ? "text-[#F5C518]" : "text-zinc-500"}`} />
+                      <span className="min-w-0"><span className="block truncate">Vehicle lights</span><span className="block text-[9px] text-zinc-500">{Tg ? "On" : "Off"}</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, toggleNeonLighting)} aria-pressed={neonLightsOn} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      <Sparkles className={`h-3.5 w-3.5 shrink-0 ${neonLightsOn ? "text-[#F19BFF]" : "text-zinc-500"}`} />
+                      <span className="min-w-0"><span className="block truncate">Underglow</span><span className="block text-[9px] text-zinc-500">{neonLightsOn ? "On" : "Off"} · L</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, () => MA((value) => value === "xray" ? "solid" : "xray"))} aria-pressed={BA === "xray"} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      <Eye className={`h-3.5 w-3.5 shrink-0 ${BA === "xray" ? "text-[#F5C518]" : "text-zinc-500"}`} />
+                      <span className="min-w-0"><span className="block truncate">Powertrain X-Ray</span><span className="block text-[9px] text-zinc-500">{BA === "xray" ? "On" : "Off"} · X</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, toggleOrbit)} aria-pressed={N} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      <RotateCw className={`h-3.5 w-3.5 shrink-0 ${N ? "animate-spin text-[#DC1A22]" : "text-zinc-500"}`} />
+                      <span className="min-w-0"><span className="block truncate">Auto-orbit</span><span className="block text-[9px] text-zinc-500">{N ? "On" : "Off"}</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, () => wg("asset"))} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
+                      <Box className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" />
+                      <span className="min-w-0"><span className="block truncate">Model & GLB</span><span className="block text-[9px] text-zinc-500">Info / upload</span></span>
+                    </button>
+                    <button type="button" onClick={(event) => runToolbarAction(event, replayEntrance)} disabled={o || !I} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5 disabled:opacity-50">
+                      <ChevronsUp className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" />
+                      <span className="min-w-0"><span className="block truncate">Lift the car</span><span className="block text-[9px] text-zinc-500">Replay showcase</span></span>
+                    </button>
+                  </div>
+                </div>
+              </details>
+              <button
+                type="button"
+                onClick={() => $(!0)}
+                className="atelier-pill grid h-10 w-10 place-items-center rounded-xl text-zinc-300 transition-colors hover:text-white"
+                title="Pure Cinema Mode — Hide UI [Key: H]"
+                aria-label="Hide interface for cinema mode"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </header>
       )}
@@ -1238,39 +1244,44 @@ export function App() {
               </div>
             )}
           </div>
-          <div className="pointer-events-auto max-w-full overflow-x-auto no-scrollbar atelier-panel px-2 py-1.5 rounded-2xl flex items-center gap-1">
+          <div className="pointer-events-auto max-w-full overflow-x-auto no-scrollbar atelier-panel flex items-center gap-1 rounded-2xl px-2 py-1.5">
             {G.interior && (
               <button
                 type="button"
                 onClick={() => KA("hero")}
-                className="px-3 py-1.5 rounded-xl bg-[#DC1A22] text-white font-mono-tech text-[10px] uppercase tracking-wider flex items-center gap-1.5 shrink-0 cursor-pointer"
+                aria-label="Exit cockpit camera"
+                className="flex shrink-0 items-center gap-1.5 rounded-xl bg-[#DC1A22] px-3 py-1.5 font-mono-tech text-[10px] uppercase tracking-wider text-white transition-colors hover:bg-[#B9151C]"
               >
-                <Compass className="w-3.5 h-3.5" />
-                {" Exit Cockpit"}
+                <Compass className="h-3.5 w-3.5" /> Exit Cockpit
               </button>
             )}
-            {CAMERA_PRESETS.map((x) => {
-              const cA = U === x.id;
+            {CAMERA_PRESETS.map((preset) => {
+              const selected = U === preset.id;
               return (
                 <button
-                  key={x.id}
+                  key={preset.id}
                   type="button"
-                  onClick={() => KA(x.id)}
-                  className={`px-3 py-1.5 rounded-xl font-mono-tech text-[10px] uppercase tracking-wider whitespace-nowrap transition-all cursor-pointer shrink-0 ${cA ? "bg-white text-black font-semibold shadow-sm" : "text-zinc-300 hover:text-white hover:bg-white/8"}`}
+                  onClick={() => KA(preset.id)}
+                  aria-label={preset.label}
+                  aria-pressed={selected}
+                  title={preset.label}
+                  className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 font-mono-tech text-[10px] uppercase tracking-wider transition-all ${selected ? "bg-white font-semibold text-black shadow-sm" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
                 >
-                  {x.shortLabel}
+                  {preset.shortLabel}
                 </button>
               );
             })}
-            <div className="w-[1px] h-4 bg-white/15 mx-1 shrink-0" />
+            <div aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-white/15" />
             <button
               type="button"
               onClick={toggleGurney}
-              className={`px-3 py-1.5 rounded-xl font-mono-tech text-[10px] uppercase tracking-wider whitespace-nowrap flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${nA ? "bg-[#DC1A22]/30 border border-[#DC1A22] text-white" : "text-zinc-300 hover:text-white hover:bg-white/8"}`}
-              title="Actuate Patented Shut-Off Gurney Active Rear Wing [Key: G]"
+              aria-pressed={nA}
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-1.5 font-mono-tech text-[10px] uppercase tracking-wider transition-all ${nA ? "border border-[#DC1A22]/70 bg-[#DC1A22]/20 text-white" : "text-zinc-300 hover:bg-white/8 hover:text-white"}`}
+              title="Toggle the active rear-wing shut-off gurney [Key: G]"
             >
-              <Wind className="w-3.5 h-3.5 text-[#38BDF8]" />
-              <span>{nA ? "Gurney: High DF" : "Shut-Off Gurney"}</span>
+              <Wind className="h-3.5 w-3.5 text-[#38BDF8]" />
+              <span className="hidden sm:inline">{nA ? "Gurney: High DF" : "Shut-Off Gurney"}</span>
+              <span className="sm:hidden">{nA ? "High DF" : "Gurney"}</span>
             </button>
           </div>
         </footer>

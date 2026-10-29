@@ -158,7 +158,7 @@ assert.match(cityHudSource, /Start engine[\s\S]*Select neutral[\s\S]*Select reve
 assert.match(raceAudioSource, /export function playEngineStartSound[\s\S]*starter[\s\S]*catchFire[\s\S]*stopEngineStartSound/, "The synthesized ignition sound must include starter cranking and engine catch phases");
 assert.match(cityHudSource, /handleEngineToggle[\s\S]*playEngineStartSound/, "Starting the engine from the HUD must trigger the ignition sound");
 assert.match(raceAudioSource, /export function startGarageTheme[\s\S]*const bpm = 92[\s\S]*export function stopGarageTheme/, "The garage must have an original, procedurally generated looping theme");
-assert.match(appSource, /garageMusicOn[\s\S]*toggleGarageMusic[\s\S]*Turn garage theme music off/, "The garage theme must have an accessible on/off control");
+assert.match(appSource, /garageMusicOn[\s\S]*toggleGarageMusic[\s\S]*Showroom controls[\s\S]*Garage music[\s\S]*Muted/, "The organized showroom controls menu must expose an accessible garage music toggle");
 assert.match(appSource, /CityDriveDirector carId=\{Q\}/, "Free-drive performance must follow the selected car model");
 assert.match(appSource, /setGarageGateOpen\(true\)[\s\S]*setCityMode\(true\)/,  "City mode must only begin after the gate-opening transition");
 assert.match(appSource, /liftTimeline\.alignForDrive\(Math\.PI\)/, "Drive ON must start the slow turntable alignment toward the garage gate");
@@ -173,7 +173,7 @@ assert.match(appSource, /fixed inset-0 z-30[\s\S]*onClick=\{replayEntrance\}[\s\
 assert.match(appSource, /Best-effort audio startup[\s\S]*initAudio\(\)/, "The site must attempt lift audio during startup where browser policy permits");
 assert.match(appSource, /pointerdown[\s\S]*unlockAudioFromGesture\(\)/, "The first user gesture after refresh must unlock audio when browser policy requires it");
 assert.match(appSource, /const replayEntrance = React\.useCallback\((?:async )?\(\) => \{[\s\S]*unlockAudioFromGesture\(\)/, "The lift button must unlock audio before replaying the entrance");
-assert.match(appSource, /onClick=\{replayEntrance\}[\s\S]*aria-label="Lift the Car"[\s\S]*Lift the Car/, "The showroom must provide a clearly labeled Lift the Car button");
+assert.match(appSource, /runToolbarAction\(event, replayEntrance\)[\s\S]*Lift the car[\s\S]*Replay showcase/, "The organized controls menu must provide a clearly labeled Lift the Car action");
 assert.match(appSource, /Keep the garage view and closed gate unchanged while the turntable aligns/);
 const driveToggleSource = appSource.match(/const enterCityDrive = React\.useCallback\((?:async )?\(\) => \{([\s\S]*?)\n  \}, \[cityMode, driveReady/);
 assert(driveToggleSource, "The Drive switch must have its own preparation flow");
@@ -321,15 +321,18 @@ assert.match(showroomSource, /environmentIntensity=\{Q\.envIntensity \* \(lights
 assert.match(showroomSource, /intensity=\{garageLightsOn \|\| cityDriveMode \? \(e \? 2\.15 : 2\.55\) : 0\}/, "Garage key lights must not dim the open city when the switch changes");
 assert.match(showroomSource, /intensity=\{garageLightsOn \|\| cityDriveMode \? 1\.25 : 0\}/, "Garage fill lights must not dim the open city when the switch changes");
 assert.doesNotMatch(showroomSource, /visible=\{garageLightsOn\}/, "Garage light switches must not change active-light shader variants");
-assert.match(appSource, /aria-label=\{garageLightsOn \? "Turn garage lights off" : "Turn garage lights on"\}/, "Garage lights need an accessible toggle");
+assert.match(appSource, /runToolbarAction\(event, toggleGarageLights\)[\s\S]*aria-pressed=\{garageLightsOn\}[\s\S]*Garage lights/, "The organized controls menu must provide an accessible garage lights toggle");
 const catalogSource = fs.readFileSync("src/data/catalog.ts", "utf8");
 assert.match(catalogSource, /CARS\.find\([\s\S]*?\) \|\| CARS\[0\]/, "Unknown car IDs must fall back to the default model");
 assert.doesNotMatch(catalogSource, /id: "overhead"|shortLabel: "Top Plan"/, "The Top Plan camera preset must be removed");
 assert.match(appSource, /cA\.key <= "7"/, "Camera shortcuts must match the seven remaining presets");
+assert.match(appSource, /overflow-x-auto no-scrollbar[\s\S]*CAMERA_PRESETS\.map\(\(preset\)[\s\S]*onClick=\{\(\) => KA\(preset\.id\)\}[\s\S]*aria-pressed=\{selected\}/, "Camera presets must remain accessible in the horizontally scrollable footer bar");
 assert.match(catalogSource, /id: "cockpit",[\s\S]*?position: \[-0\.346, 1\.3, 0\.85\]/, "Cockpit view must pull back behind the steering wheel");
 assert.match(appSource, /\[HA, lg\] = React\.useState\(0\)/, "The steering and front wheels must start centered");
 assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode && !cityMode\}/, "Inspection pins must remain available in the remaining camera views");
-assert.match(appSource, /Choose a circuit and conditions before starting a race/, "Race should open the circuit and conditions setup first");
+assert.match(appSource, /Choose a circuit, weather and difficulty before starting/, "Race should open the circuit, weather and difficulty setup first");
+assert.match(appSource, /max-h-\[min\(76vh,36rem\)\] w-\[min\(22rem,calc\(100vw_-_1rem\)\)\]/, "The controls popover must use a viewport-safe width and height on narrow screens");
+assert.match(appSource, /Studio sections[\s\S]*sm:hidden[\s\S]*Garage gate[\s\S]*aria-label="Hide interface for cinema mode"/, "Mobile toolbar overflow must keep studio navigation and the gate action available in Controls");
 const originalTrackLength = raceTrackModule.TRACK_LENGTH;
 const originalStart = Array.from(raceTrackModule.samples.slice(0, 3));
 function assertStraightStart(mapName) {
