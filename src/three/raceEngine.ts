@@ -17,6 +17,7 @@
  *    literals, no closures — scratch values are module level.
  */
 import { MathUtils } from "three";
+import { raceSession } from "./raceSession";
 import {
   CAR_HALF_WIDTH,
   CHECKPOINT_COUNT,
@@ -169,11 +170,17 @@ export const raceTelemetry = {
  * raycasts, and no per-frame object allocation.
  */
 const AI_SKILL = [
-  /** Quick: a clean lap plus a well-timed turbo burst is needed to beat it. */
+  /** Baseline (Normal): a clean lap plus well-timed turbo is needed to beat the lead rival. */
   { top: 60, accel: 13.5, latAccel: 16.5, laneCenter: -1.8, laneSwing: 2.5 },
-  /** Slower, takes a different changing line and leaves room for the pack. */
+  /** Baseline (Normal): slower, takes a different changing line and leaves room for the pack. */
   { top: 56, accel: 11.5, latAccel: 13.2, laneCenter: 2.2, laneSwing: 2.4 },
 ];
+
+const AI_DIFFICULTY_TUNING = {
+  easy: { topSpeed: 0.82, acceleration: 0.72, cornering: 0.84, catchUp: 0.28, paceRange: 0.1 },
+  normal: { topSpeed: 1, acceleration: 1, cornering: 1, catchUp: 0.55, paceRange: 0.18 },
+  hard: { topSpeed: 1.08, acceleration: 1.22, cornering: 1.2, catchUp: 0.72, paceRange: 0.22 },
+};
 
 export const raceAi = {
   x: new Float32Array(AI_COUNT),
@@ -467,6 +474,7 @@ function resetAi() {
 /** One AI tick — only ever called while the race is actually running. */
 function stepAi(dt: number) {
   const playerProgress = race.gridLap + relativeRaceIndex(vehicle.indexFloat) / SAMPLE_COUNT;
+  const tuning = AI_DIFFICULTY_TUNING[raceSession.difficulty];
   for (let car = 0; car < AI_COUNT; car++) {
     const skill = AI_SKILL[car];
     const index = raceAi.indexFloat[car];
@@ -480,18 +488,18 @@ function stepAi(dt: number) {
       const value = curvatureAt(sample + step);
       if (value > curvature) curvature = value;
     }
-    const corner = Math.sqrt(skill.latAccel / Math.max(curvature, 0.0009));
-    let target = Math.min(skill.top, corner);
+    const corner = Math.sqrt((skill.latAccel * tuning.cornering) / Math.max(curvature, 0.0009));
+    let target = Math.min(skill.top * tuning.topSpeed, corner);
 
-    // Pace correction keeps the field within a credible racing distance without
-    // teleporting anyone: trailing rivals can catch up, leaders ease off slightly.
+    // Difficulty adjusts both the pace and how strongly trailing rivals catch up.
+    // No opponent teleports: all changes still flow through normal acceleration.
     const gap = playerProgress - (raceAi.gridLap[car] + relativeRaceIndex(index, raceAi.startIndex[car]) / SAMPLE_COUNT);
-    target *= 1 + MathUtils.clamp(gap * 0.55, -0.18, 0.18);
+    target *= 1 + MathUtils.clamp(gap * tuning.catchUp, -tuning.paceRange, tuning.paceRange);
 
     const speedError = target - raceAi.speed[car];
     raceAi.impact[car] = Math.max(0, raceAi.impact[car] - dt * 2.8);
     raceAi.braking[car] = speedError < -0.08 || raceAi.impact[car] > 0.2 ? 1 : 0;
-    raceAi.speed[car] += MathUtils.clamp(speedError, -26 * dt, skill.accel * dt);
+    raceAi.speed[car] += MathUtils.clamp(speedError, -26 * dt, skill.accel * tuning.acceleration * dt);
 
     let next = index + (raceAi.speed[car] / SEGMENT_LENGTH) * dt;
     if (next >= SAMPLE_COUNT) next -= SAMPLE_COUNT;
@@ -600,7 +608,7 @@ function applyAiImpact(car: number, normalX: number, normalZ: number, impulse: n
   const velocityZ = raceAi.speed[car] * forwardZ + normalZ * impulse * direction;
   const along = velocityX * forwardX + velocityZ * forwardZ;
   const lateralKick = velocityX * sideX + velocityZ * sideZ;
-  raceAi.speed[car] = MathUtils.clamp(along, 0, AI_SKILL[car].top) * (1 - strength * 0.18);
+  raceAi.speed[car] = MathUtils.clamp(along, 0, AI_SKILL[car].top * AI_DIFFICULTY_TUNING[raceSession.difficulty].topSpeed) * (1 - strength * 0.18);
   raceAi.lateral[car] = MathUtils.clamp(raceAi.lateral[car] + lateralKick * 0.12, -LATERAL_LIMIT, LATERAL_LIMIT);
   raceAi.impact[car] = Math.max(raceAi.impact[car], strength);
   raceAi.impactSide[car] = Math.sign(lateralKick) || Math.sign(direction * (normalX * sideX + normalZ * sideZ)) || 1;
