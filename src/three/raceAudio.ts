@@ -38,6 +38,7 @@ let garageMusicBus: GainNode | null = null;
 let garageMusicTimer: number | null = null;
 let garageMusicCleanupTimer: number | null = null;
 let garageMusicPlaying = false;
+let lastCountdownTone: { value: number; at: number } | null = null;
 
 /** Idle / redline fundamental, in Hz. */
 const ENGINE_MIN_HZ = 34;
@@ -63,6 +64,60 @@ function makeAirNoiseBuffer(context: AudioContext) {
   const data = buffer.getChannelData(0);
   for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * 0.35;
   return buffer;
+}
+
+/**
+ * Schedules a short synth voice on the shared, already-unlocked context.
+ * One-shot oscillator and gain nodes disconnect as soon as their note ends.
+ */
+function scheduleSynthVoice(
+  frequency: number,
+  endFrequency: number,
+  duration: number,
+  peak: number,
+  wave: OscillatorType,
+  at: number,
+) {
+  if (!ctx || !master || ctx.state === "closed") return;
+  const oscillator = ctx.createOscillator();
+  const envelope = ctx.createGain();
+  oscillator.type = wave;
+  oscillator.frequency.setValueAtTime(frequency, at);
+  if (endFrequency !== frequency) oscillator.frequency.exponentialRampToValueAtTime(endFrequency, at + duration * 0.92);
+  envelope.gain.setValueAtTime(0.0001, at);
+  envelope.gain.exponentialRampToValueAtTime(peak, at + Math.min(0.008, duration * 0.08));
+  envelope.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+  oscillator.connect(envelope);
+  envelope.connect(master);
+  oscillator.onended = () => {
+    oscillator.disconnect();
+    envelope.disconnect();
+  };
+  oscillator.start(at);
+  oscillator.stop(at + duration + 0.02);
+}
+
+/** Per-second standing-start beep, triggered alongside the red/yellow/green lamp pulse. */
+export function playRaceCountdownTone(value: number) {
+  if (!ctx || !master || value < 1 || value > 5) return;
+  // React StrictMode replays mount effects in development; don't double the
+  // initial T-5 tone when that replay re-emits the same countdown event.
+  const wallNow = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (lastCountdownTone?.value === value && wallNow - lastCountdownTone.at < 120) return;
+  lastCountdownTone = { value, at: wallNow };
+  const frequency = value >= 3 ? 440 : value === 2 ? 660 : 880;
+  const now = ctx.currentTime;
+  master.gain.setTargetAtTime(0.82, now, 0.03);
+  scheduleSynthVoice(frequency, frequency, 0.1, 0.14, "sine", now);
+}
+
+/** Bright high-pitch sweep played at T-0 as GO releases the grid. */
+export function playRaceGoChime() {
+  if (!ctx || !master) return;
+  const now = ctx.currentTime;
+  master.gain.setTargetAtTime(0.82, now, 0.03);
+  scheduleSynthVoice(1200, 1760, 0.3, 0.15, "sine", now);
+  scheduleSynthVoice(2400, 3520, 0.26, 0.035, "sine", now + 0.008);
 }
 
 /** Builds the whole graph. Safe to call repeatedly; only the first call wins. */

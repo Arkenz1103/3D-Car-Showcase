@@ -8,26 +8,29 @@
  * reused frame after frame.
  */
 import { useFrame, useThree } from "@react-three/fiber";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { AdditiveBlending, BufferAttribute, BufferGeometry, DoubleSide, PlaneGeometry, Vector3 } from "three";
 import { makePlumeTexture } from "./raceAssets";
 import {
   abortRace,
   activateTurbo,
   pauseRace,
+  prepareRaceGrid,
+  raceAi,
   raceDrive,
   raceInput,
   racePhase,
   startRaceSequence,
   stepRace,
+  subscribeRace,
 } from "./raceEngine";
 import { markShadowsDirty } from "./sceneMotion";
-import { currentEnv, cycleCamera, raceSession } from "./raceSession";
-import { triggerTurboBurst, updateAudio } from "./raceAudio";
+import { currentEnv, cycleCamera, raceSession, setCameraMode } from "./raceSession";
+import { playRaceCountdownTone, playRaceGoChime, triggerTurboBurst, updateAudio } from "./raceAudio";
 
 /** Camera framing constants — one place to tune the whole race feel. */
 const CAM = { base: 8.5, height: 2.7, look: 10.5, fov: 62, follow: 8.4 };
-const RACE_FRAME_INTERVAL = 1000 / 40;
+const RACE_FRAME_INTERVAL = 1000 / 60;
 
 /**
  * Per camera mount: eye offset along forward / up / left, the look-ahead
@@ -38,9 +41,9 @@ const RACE_FRAME_INTERVAL = 1000 / 40;
  *  2 cockpit — driver's eyeline, looking over the steering wheel
  */
 const CAM_MOUNTS = [
-  { fwd: 0, up: 0, left: 0, look: 10.5, fov: 62, roll: 0.55, near: 0.3 },
-  { fwd: 0.42, up: 0.94, left: 0, look: 22, fov: 70, roll: 0.7, near: 0.18 },
-  { fwd: -0.26, up: 1.07, left: 0.33, look: 24, fov: 72, roll: 0.85, near: 0.06 },
+  { fwd: 0, up: 0, left: 0, look: 10.5, fov: 62, near: 0.3 },
+  { fwd: 0.42, up: 0.94, left: 0, look: 22, fov: 70, near: 0.18 },
+  { fwd: -0.26, up: 1.07, left: 0.33, look: 24, fov: 72, near: 0.06 },
 ];
 
 const camGoal = new Vector3();
@@ -63,23 +66,59 @@ function releaseKeys() {
   raceInput.handbrake = false;
 }
 
+function requestNextRaceFrame(state: any, gate: { last: number; timer: number }) {
+  const now = performance.now();
+  const elapsed = now - gate.last;
+  if (elapsed >= RACE_FRAME_INTERVAL) {
+    gate.last = now;
+    state.invalidate();
+  } else if (!gate.timer) {
+    gate.timer = window.setTimeout(() => {
+      gate.timer = 0;
+      gate.last = performance.now();
+      state.invalidate();
+    }, RACE_FRAME_INTERVAL - elapsed);
+  }
+}
+
 /**
  * Applies the live simulation transform to the vehicle. Kept separate from
  * <RaceDirector/> so the car element can stay mounted (and its GLB / shader
  * warm-up cache stay warm) while the showroom and race modes swap around it.
  */
 export const RaceSceneReady = memo(function RaceSceneReady({ onReady }: { onReady: () => void }) {
-  const firstFrame = useRef(false);
+  const invalidate = useThree((state) => state.invalidate);
+  const renderedFrames = useRef(0);
   const timer = useRef<number | null>(null);
+  const wakeTimer = useRef<number | null>(null);
+
+  // Demand rendering can otherwise go idle between mounting the track and its
+  // first draw. Nudge it until two scene frames have reached the renderer.
+  useEffect(() => {
+    invalidate();
+    wakeTimer.current = window.setInterval(invalidate, 80);
+    return () => {
+      if (wakeTimer.current !== null) window.clearInterval(wakeTimer.current);
+      wakeTimer.current = null;
+    };
+  }, [invalidate]);
+
   useFrame(() => {
-    if (firstFrame.current) return;
-    firstFrame.current = true;
-    // Let the circuit complete several frames of texture upload and shader
-    // warm-up behind the loading card before revealing the race HUD.
-    timer.current = window.setTimeout(onReady, 900);
+    if (timer.current !== null) return;
+    renderedFrames.current += 1;
+    if (renderedFrames.current < 2) return;
+    if (wakeTimer.current !== null) {
+      window.clearInterval(wakeTimer.current);
+      wakeTimer.current = null;
+    }
+    // Two rendered frames upload the scene resources; a short grace period
+    // lets the browser settle before the loading overlay is dismissed.
+    timer.current = window.setTimeout(onReady, 450);
   }, 0);
+
   useLayoutEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
+    if (wakeTimer.current !== null) window.clearInterval(wakeTimer.current);
   }, []);
   return null;
 });
@@ -314,34 +353,71 @@ export const RaceCrashSparks = memo(function RaceCrashSparks() {
  * The race mode driver. Mounting it starts the standing start; unmounting it
  * pulls the car back off the circuit and restores the showroom camera planes.
  */
-export const RaceDirector = memo(function RaceDirector() {
+export const RaceDirector = memo(function RaceDirector({
+  onCinematicComplete,
+}: {
+  onCinematicComplete: () => void;
+}) {
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
   const clock = useRef(0);
+  const cinematic = useRef(true);
+  const countdownPending = useRef(false);
+  const cinematicStartedAt = useRef(0);
   const settled = useRef(false);
   const frameGate = useRef({ last: 0, timer: 0 });
   /** Last camera mount applied — latches the near-plane write to the switch. */
   const camView = useRef(-1);
 
-  // Enter: fresh grid slot, wide projection planes, pressed-key bookkeeping.
+  // Stage the car silently. The HUD and five-second lights stay hidden until
+  // the cinematic has completed and the camera reaches the chase position.
   useLayoutEffect(() => {
     camera.near = 0.3;
     camera.far = 1500;
     camera.updateProjectionMatrix();
     settled.current = false;
-    camView.current = -1;
+    camView.current = 0;
+    setCameraMode(0);
     clock.current = 0;
     frameGate.current.last = 0;
     if (frameGate.current.timer) window.clearTimeout(frameGate.current.timer);
     frameGate.current.timer = 0;
+    countdownPending.current = false;
     releaseKeys();
-    startRaceSequence();
+    const stopCountdownAudio = subscribeRace((event) => {
+      if (event.type === "countdown" && event.value > 0) playRaceCountdownTone(event.value);
+      else if (event.type === "go") playRaceGoChime();
+    });
+    prepareRaceGrid();
+    cinematic.current = true;
+    cinematicStartedAt.current = performance.now();
+    camForward.set(-Math.sin(raceDrive.heading), 0, -Math.cos(raceDrive.heading));
+    const rightX = Math.cos(raceDrive.heading);
+    const rightZ = -Math.sin(raceDrive.heading);
+    camera.up.set(0, 1, 0);
+    // Start on a low right-front-quarter view, framed on the user's wheel and body.
+    camera.position.set(
+      raceDrive.x + camForward.x * 0.3 + rightX * 3.9,
+      raceDrive.y + 0.42,
+      raceDrive.z + camForward.z * 0.3 + rightZ * 3.9,
+    );
+    camLook.set(
+      raceDrive.x + camForward.x * 1.4 + rightX * 0.62,
+      raceDrive.y + 0.74,
+      raceDrive.z + camForward.z * 1.4 + rightZ * 0.62,
+    );
+    camera.fov = CAM_MOUNTS[0].fov;
+    camera.lookAt(camLook);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    settled.current = true;
     invalidate();
     return () => {
+      cinematic.current = false;
+      countdownPending.current = false;
+      stopCountdownAudio();
       if (frameGate.current.timer) window.clearTimeout(frameGate.current.timer);
       frameGate.current.timer = 0;
-      // Unmounting IS leaving the circuit: park the simulation so the rig
-      // releases the car and the HUD's next mount starts from a clean grid slot.
       releaseKeys();
       abortRace();
       camera.near = 0.08;
@@ -349,11 +425,11 @@ export const RaceDirector = memo(function RaceDirector() {
       camera.fov = 40;
       camera.updateProjectionMatrix();
     };
-  }, [camera, invalidate]);
+  }, [camera, invalidate, onCinematicComplete]);
 
   useLayoutEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (event.repeat) return;
+      if (event.repeat || cinematic.current || countdownPending.current) return;
       switch (event.code) {
         case "KeyW":
         case "ArrowUp":
@@ -438,6 +514,113 @@ export const RaceDirector = memo(function RaceDirector() {
   }, [invalidate]);
 
   useFrame((state, delta) => {
+    if (cinematic.current) {
+      const elapsed = Math.max(0, (performance.now() - cinematicStartedAt.current) / 1000);
+      camForward.set(-Math.sin(raceDrive.heading), 0, -Math.cos(raceDrive.heading));
+      const rightX = Math.cos(raceDrive.heading);
+      const rightZ = -Math.sin(raceDrive.heading);
+      let cameraX: number;
+      let cameraY: number;
+      let cameraZ: number;
+      let lookX: number;
+      let lookY: number;
+      let lookZ: number;
+
+      if (elapsed < 1.5) {
+        // Angle 1: low right-front quarter, framed on the front wheel/body.
+        const sweep = elapsed / 1.5;
+        cameraX = raceDrive.x + camForward.x * (0.3 + sweep * 0.18) + rightX * (3.9 - sweep * 0.22);
+        cameraY = raceDrive.y + 0.42;
+        cameraZ = raceDrive.z + camForward.z * (0.3 + sweep * 0.18) + rightZ * (3.9 - sweep * 0.22);
+        lookX = raceDrive.x + camForward.x * 1.4 + rightX * 0.62;
+        lookY = raceDrive.y + 0.74;
+        lookZ = raceDrive.z + camForward.z * 1.4 + rightZ * 0.62;
+      } else if (elapsed < 3) {
+        // Angle 2: a hard cut to the left profile, then a gentle pan toward
+        // the front quarter to show the side paint and temporary underglow.
+        const progress = (elapsed - 1.5) / 1.5;
+        const eased = progress * progress * (3 - 2 * progress);
+        const angle = -Math.PI / 2 + 0.24 * eased;
+        const forwardOffset = Math.cos(angle) * 4.6;
+        const rightOffset = Math.sin(angle) * 4.6;
+        cameraX = raceDrive.x + camForward.x * forwardOffset + rightX * rightOffset;
+        cameraY = raceDrive.y + 0.48 + eased * 0.08;
+        cameraZ = raceDrive.z + camForward.z * forwardOffset + rightZ * rightOffset;
+        lookX = raceDrive.x + camForward.x * 0.16;
+        lookY = raceDrive.y + 0.72;
+        lookZ = raceDrive.z + camForward.z * 0.16;
+      } else if (elapsed < 4.2) {
+        // Angle 3: eagle-eye establishing shot, centered on the player and both
+        // opponents so the complete starting formation is visible at once.
+        const gridCenterX = (raceDrive.x + raceAi.x[0] + raceAi.x[1]) / 3;
+        const gridCenterY = (raceDrive.y + raceAi.y[0] + raceAi.y[1]) / 3;
+        const gridCenterZ = (raceDrive.z + raceAi.z[0] + raceAi.z[1]) / 3;
+        cameraX = gridCenterX - camForward.x * 7 + rightX * 7;
+        cameraY = gridCenterY + 15;
+        cameraZ = gridCenterZ - camForward.z * 7 + rightZ * 7;
+        lookX = gridCenterX + camForward.x * 0.5;
+        lookY = gridCenterY + 0.4;
+        lookZ = gridCenterZ + camForward.z * 0.5;
+      } else if (elapsed < 5.7) {
+        // Angle 4: third-person rear chase framing, looking forward toward the grid.
+        cameraX = raceDrive.x - camForward.x * 6.5;
+        cameraY = raceDrive.y + 2;
+        cameraZ = raceDrive.z - camForward.z * 6.5;
+        lookX = raceDrive.x + camForward.x * 11.5;
+        lookY = raceDrive.y + 1;
+        lookZ = raceDrive.z + camForward.z * 11.5;
+      } else if (elapsed < 6.2) {
+        // Blend from the rear third-person shot into the main chase rig over half a second.
+        const progress = (elapsed - 5.7) / 0.5;
+        const eased = progress * progress * (3 - 2 * progress);
+        const rearX = raceDrive.x - camForward.x * 6.5;
+        const rearY = raceDrive.y + 2;
+        const rearZ = raceDrive.z - camForward.z * 6.5;
+        const chaseX = raceDrive.x - camForward.x * CAM.base;
+        const chaseY = raceDrive.y + CAM.height;
+        const chaseZ = raceDrive.z - camForward.z * CAM.base;
+        cameraX = rearX + (chaseX - rearX) * eased;
+        cameraY = rearY + (chaseY - rearY) * eased;
+        cameraZ = rearZ + (chaseZ - rearZ) * eased;
+        lookX = raceDrive.x + camForward.x * 11.5 + (raceDrive.x + camForward.x * CAM.look - (raceDrive.x + camForward.x * 11.5)) * eased;
+        lookY = raceDrive.y + 1 + (raceDrive.y + 1.05 - (raceDrive.y + 1)) * eased;
+        lookZ = raceDrive.z + camForward.z * 11.5 + (raceDrive.z + camForward.z * CAM.look - (raceDrive.z + camForward.z * 11.5)) * eased;
+      } else {
+        const chaseX = raceDrive.x - camForward.x * CAM.base;
+        const chaseY = raceDrive.y + CAM.height;
+        const chaseZ = raceDrive.z - camForward.z * CAM.base;
+        camera.position.set(chaseX, chaseY, chaseZ);
+        camLook.set(
+          raceDrive.x + camForward.x * CAM.look,
+          raceDrive.y + 1.05,
+          raceDrive.z + camForward.z * CAM.look,
+        );
+        camera.lookAt(camLook);
+        // Finish the camera move first. Start the countdown/audio on the next
+        // frame so no red light or gameplay HUD overlaps the cinematic shot.
+        cinematic.current = false;
+        countdownPending.current = true;
+        clock.current = 0;
+        frameGate.current.last = performance.now();
+        settled.current = true;
+        requestNextRaceFrame(state, frameGate.current);
+        return;
+      }
+
+      camera.position.set(cameraX, cameraY, cameraZ);
+      camLook.set(lookX, lookY, lookZ);
+      camera.lookAt(camLook);
+      requestNextRaceFrame(state, frameGate.current);
+      return;
+    }
+
+    if (countdownPending.current) {
+      countdownPending.current = false;
+      releaseKeys();
+      startRaceSequence();
+      onCinematicComplete();
+    }
+
     clock.current += delta;
 
     // Analogue ramps: a tap is a tap, a hold is a hold.
@@ -474,12 +657,14 @@ export const RaceDirector = memo(function RaceDirector() {
       settled.current = false;
     }
 
-    const orbit = raceSession.camMode === 0 && (phase === "countdown" || phase === "finished");
+    const orbit = raceSession.camMode === 0 && phase === "finished";
+    const leftX = -Math.cos(raceDrive.heading);
+    const leftZ = Math.sin(raceDrive.heading);
 
     if (orbit) {
-      // Slow hero orbit while the grid lights run, and again on the podium.
-      const angle = clock.current * (phase === "countdown" ? 0.42 : 0.26);
-      const radius = phase === "countdown" ? 10.5 : 15;
+      // Slow hero orbit around the winner at the podium.
+      const angle = clock.current * 0.26;
+      const radius = 15;
       camGoal.set(
         raceDrive.x + Math.sin(angle) * radius,
         raceDrive.y + 3.1 + Math.sin(clock.current * 0.5) * 0.35,
@@ -527,7 +712,8 @@ export const RaceDirector = memo(function RaceDirector() {
       raceDrive.z + camForward.z * mount.look,
     );
     camera.lookAt(camLook);
-    camera.rotation.z += raceDrive.roll * mount.roll;
+    // World-up lookAt keeps the horizon upright without rotating the camera's
+    // Euler angles directly (which can introduce a 90-degree view flip).
 
     // Nitro punch: the pulse is driven by the engine's boost envelope.
     const fov = mount.fov + raceDrive.boostFx * 15 + Math.min(speed, 84) * 0.11;
@@ -536,18 +722,7 @@ export const RaceDirector = memo(function RaceDirector() {
       camera.updateProjectionMatrix();
     }
 
-    const now = performance.now();
-    const elapsed = now - frameGate.current.last;
-    if (elapsed >= RACE_FRAME_INTERVAL) {
-      frameGate.current.last = now;
-      state.invalidate();
-    } else if (!frameGate.current.timer) {
-      frameGate.current.timer = window.setTimeout(() => {
-        frameGate.current.timer = 0;
-        frameGate.current.last = performance.now();
-        state.invalidate();
-      }, RACE_FRAME_INTERVAL - elapsed);
-    }
+    requestNextRaceFrame(state, frameGate.current);
   }, -6);
 
   return null;

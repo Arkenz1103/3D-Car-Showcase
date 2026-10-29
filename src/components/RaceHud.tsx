@@ -143,10 +143,8 @@ export function RaceHud({
   const wrongWayRef = React.useRef<HTMLDivElement>(null);
   const sectorRef = React.useRef<HTMLDivElement>(null);
 
-  // Seeded at "3": the HUD mounts in the same tick as the circuit, and the
-  // countdown is always a standing start, so the first digit is never missed.
-  const [countdown, setCountdown] = React.useState<number | null>(3);
-  const [GO, setGO] = React.useState(false);
+  // Seeded at five so the first red light is visible as the race mounts.
+  const [countdown, setCountdown] = React.useState<number | null>(5);
   const [toast, setToast] = React.useState<string | null>(null);
   const [crashFlash, setCrashFlash] = React.useState(0);
   const [summary, setSummary] = React.useState<any>(null);
@@ -174,17 +172,11 @@ export function RaceHud({
   );
 
   React.useEffect(() => {
-    let hideGO = 0;
     let hideToast = 0;
     let hideCrash = 0;
     const unsubscribe = subscribeRace((event: any) => {
       if (event.type === "countdown") {
         setCountdown(event.value > 0 ? event.value : null);
-        if (event.value === 0) {
-          setGO(true);
-          window.clearTimeout(hideGO);
-          hideGO = window.setTimeout(() => setGO(false), 1100);
-        }
       } else if (event.type === "lap") {
         setToast(
           `LAP ${event.lap} · ${formatRaceTime(event.lapTime)}${event.best ? " · BEST LAP" : ""}`,
@@ -198,6 +190,11 @@ export function RaceHud({
         triggerCrashImpact(event.strength);
         window.clearTimeout(hideCrash);
         hideCrash = window.setTimeout(() => setCrashFlash(0), 260);
+      } else if (event.type === "opponentCrash") {
+        setToast("RIVALS COLLIDE");
+        triggerCrashImpact(event.strength * 0.65);
+        window.clearTimeout(hideToast);
+        hideToast = window.setTimeout(() => setToast(null), 1700);
       } else if (event.type === "phase") {
         setPhase(event.phase);
         setPaused(event.phase === "paused");
@@ -209,7 +206,6 @@ export function RaceHud({
     });
     return () => {
       unsubscribe();
-      window.clearTimeout(hideGO);
       window.clearTimeout(hideToast);
       window.clearTimeout(hideCrash);
     };
@@ -556,15 +552,28 @@ export function RaceHud({
       </div>
 
       {/* --------------------------------------------------------- centre fx */}
-      <div className="absolute inset-x-0 top-[26%] flex flex-col items-center gap-3 pointer-events-none">
+      <div className="absolute inset-x-0 top-[15%] z-50 flex flex-col items-center gap-3 pointer-events-none">
         {countdown !== null && (
-          <div key={countdown} className="race-count font-display text-[92px] sm:text-[128px] font-black leading-none text-white drop-shadow-[0_0_40px_rgba(220,26,34,0.65)]">
-            {countdown}
-          </div>
-        )}
-        {GO && (
-          <div className="race-count font-display text-[76px] sm:text-[104px] font-black leading-none text-[#4ADE80] drop-shadow-[0_0_46px_rgba(74,222,128,0.7)]">
-            GO!
+          <div
+            className="flex flex-col items-center gap-2"
+            role="status"
+            aria-label={`Race starts in ${countdown}`}
+          >
+            <div className="flex items-center gap-3 rounded-2xl border border-white/25 bg-[#080a10] px-5 py-4 shadow-[0_12px_48px_rgba(0,0,0,0.65)] backdrop-blur-md sm:gap-4 sm:px-7 sm:py-5">
+              {[0, 1, 2, 3, 4].map((light) => {
+                const lightColor = countdown >= 3
+                  ? "border-red-100 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
+                  : countdown === 2
+                    ? "border-amber-100 bg-amber-400 shadow-[0_0_22px_rgba(251,191,36,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
+                    : "border-emerald-100 bg-emerald-400 shadow-[0_0_22px_rgba(74,222,128,1),inset_0_1px_7px_rgba(255,255,255,0.85)]";
+                return (
+                  <span
+                    key={`${countdown}-${light}`}
+                    className={`race-start-light h-6 w-6 rounded-full border transition-colors duration-200 sm:h-9 sm:w-9 ${lightColor}`}
+                  />
+                );
+              })}
+            </div>
           </div>
         )}
         {toast && (

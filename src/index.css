@@ -187,22 +187,20 @@ button:focus-visible {
   animation: race-wrongway 620ms steps(2, end) infinite;
 }
 
-@keyframes race-count-pop {
-  0% {
-    opacity: 0;
-    transform: scale(1.85);
-  }
-  28% {
+@keyframes race-start-light-blink {
+  0%,
+  49% {
     opacity: 1;
-    transform: scale(1);
   }
+  50%,
   100% {
     opacity: 0;
-    transform: scale(0.82);
   }
 }
-.race-count {
-  animation: race-count-pop 1s cubic-bezier(0.22, 0.9, 0.28, 1) both;
+
+.race-start-light {
+  animation: race-start-light-blink 1s steps(1, end) both;
+  will-change: opacity;
 }
 
 @keyframes race-toast {
@@ -232,7 +230,6 @@ button:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .race-count,
   .race-toast,
   .race-wrongway {
     animation: none;

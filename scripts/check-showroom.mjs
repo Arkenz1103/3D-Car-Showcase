@@ -131,7 +131,7 @@ assert.match(appSource, /cA\.key === "Escape"[\s\S]*setPauseMenuOpen\(true\)/, "
 assert.match(appSource, /!pauseMenuOpen && !pendingCar && \([\s\S]*MainMenu/, "The pause menu and car confirmation must hide garage HUD controls while open");
 assert.match(appSource, /mode="pause"[\s\S]*onResume=\{resumeGame\}[\s\S]*onQuitToTitle=\{quitToMainMenu\}/, "The garage pause menu must support resume and quit-to-title actions");
 assert.match(mainMenuSource, /if \(mode === "pause"\) onResume\?\.\(\)[\s\S]*mode === "pause" \? "Resume Game" : "Start Game"/, "The pause menu's primary action must resume the showroom");
-assert.match(appSource, /shadows=\{!raceMode && graphicsQuality !== "low"\}[\s\S]*dpr=\{raceMode \? 1 : graphicsQuality === "low"/, "Race rendering must use native pixel density and skip the expensive shadow map for stability");
+assert.match(appSource, /shadows=\{!raceMode && graphicsQuality !== "low"\}[\s\S]*dpr=\{raceMode \? 0\.9 : graphicsQuality === "low"/, "Race rendering must reduce pixel load and skip the expensive shadow map for stable frame rates");
 assert.match(showroomSource, /lightsOn=\{garageLightsOn \|\| cityDriveMode\}/, "Garage lights must not dim global environment lighting while city driving is visible");
 assert.match(showroomSource, /cityDriveMode \? 0\.36 : garageLightsOn \? 0\.52 : 0\.18/, "Garage light toggles must not darken the open city");
 const garageCarDisplaysSource = fs.readFileSync("src/three/GarageCarDisplays.tsx", "utf8");
@@ -332,19 +332,88 @@ assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMod
 assert.match(appSource, /Choose a circuit and conditions before starting a race/, "Race should open the circuit and conditions setup first");
 const originalTrackLength = raceTrackModule.TRACK_LENGTH;
 const originalStart = Array.from(raceTrackModule.samples.slice(0, 3));
+function assertStraightStart(mapName) {
+  for (let sample = -8; sample < 8; sample++) {
+    const index = (sample + raceTrackModule.SAMPLE_COUNT) % raceTrackModule.SAMPLE_COUNT;
+    assert(raceTrackModule.curvatureAt(index) < 0.01, `${mapName} must have a straight start/finish section at sample ${sample}: ${raceTrackModule.curvatureAt(index)}`);
+  }
+}
+function assertUniformRoadSamples(mapName) {
+  let minRatio = Infinity;
+  let maxRatio = 0;
+  for (let sample = 0; sample < raceTrackModule.SAMPLE_COUNT; sample++) {
+    const offset = sample * 7;
+    const next = ((sample + 1) % raceTrackModule.SAMPLE_COUNT) * 7;
+    const segmentLength = Math.hypot(
+      raceTrackModule.samples[next] - raceTrackModule.samples[offset],
+      raceTrackModule.samples[next + 1] - raceTrackModule.samples[offset + 1],
+      raceTrackModule.samples[next + 2] - raceTrackModule.samples[offset + 2],
+    );
+    const ratio = segmentLength / raceTrackModule.SEGMENT_LENGTH;
+    minRatio = Math.min(minRatio, ratio);
+    maxRatio = Math.max(maxRatio, ratio);
+  }
+  assert(minRatio > 0.93 && maxRatio < 1.01, `${mapName} road samples must be evenly spaced to prevent stretched or broken road sections (min ${minRatio}, max ${maxRatio})`);
+}
 assert(raceTrackModule.selectRaceTrack("riviera"), "Riviera race map must be selectable");
 assert.equal(raceSessionModule.raceSession.mapId, "riviera");
+assertStraightStart("Riviera");
+assertUniformRoadSamples("Riviera");
 assert.notEqual(raceTrackModule.TRACK_LENGTH, originalTrackLength, "Riviera must use its own racing line");
 assert.notDeepEqual(Array.from(raceTrackModule.samples.slice(0, 3)), originalStart, "Map selection must replace the circuit geometry");
 assert(raceTrackModule.selectRaceTrack("alpine"), "Alpine race map must be selectable");
 assert.equal(raceSessionModule.raceSession.mapId, "alpine");
+assertStraightStart("Alpine");
+assertUniformRoadSamples("Alpine");
 assert(raceTrackModule.selectRaceTrack("maranello"), "The default race map must remain selectable");
+assertStraightStart("Maranello");
+assertUniformRoadSamples("Maranello");
+assert.match(fs.readFileSync("src/three/raceTrack.ts", "utf8"), /curve\.arcLengthDivisions = SAMPLE_COUNT \* 8/, "Road geometry must use high-precision arc-length sampling");
+const closedRoadGeometry = raceTrackModule.buildRoadSurface();
+const roadPositions = closedRoadGeometry.getAttribute("position");
+assert.equal(roadPositions.count, (raceTrackModule.SAMPLE_COUNT + 1) * 2, "The asphalt ribbon must include matching vertices at the loop seam");
+assert.equal(closedRoadGeometry.index.count, raceTrackModule.SAMPLE_COUNT * 6, "Every road segment, including the final segment back to the start, must have two triangles");
+assert.deepEqual(Array.from(roadPositions.array.slice(0, 6)), Array.from(roadPositions.array.slice(-6)), "The road seam must meet exactly with no visible gap");
 const raceDirectorSource = fs.readFileSync("src/three/RaceDirector.tsx", "utf8");
-assert.match(raceDirectorSource, /RACE_FRAME_INTERVAL = 1000 \/ 40[\s\S]*setTimeout\(\(\) => \{[\s\S]*state\.invalidate\(\)/, "Demand rendering must cap race updates to 40 fps rather than saturating the browser main thread");
+assert.match(raceDirectorSource, /subscribeRace\(\(event\)[\s\S]*playRaceCountdownTone\(event\.value\)[\s\S]*playRaceGoChime\(\)[\s\S]*startRaceSequence\(\)/, "Race audio must subscribe before T-5 and sound each countdown event plus T-0 GO");
+assert.match(raceDirectorSource, /prepareRaceGrid\(\)[\s\S]*camera\.position\.set\([\s\S]*camera\.lookAt\(camLook\)/, "The car must be staged and the first cinematic angle applied before rendering");
+const raceCinematicSource = raceDirectorSource.slice(raceDirectorSource.indexOf("if (cinematic.current)"), raceDirectorSource.indexOf("    if (countdownPending.current) {"));
+assert.match(raceCinematicSource, /elapsed < 1\.5[\s\S]*elapsed < 3[\s\S]*elapsed < 4\.2[\s\S]*elapsed < 5\.7[\s\S]*elapsed < 6\.2[\s\S]*countdownPending\.current = true/, "The right, left, eagle-eye, rear and chase shots must finish before scheduling the countdown");
+assert.doesNotMatch(raceCinematicSource, /startRaceSequence\(\)|onCinematicComplete\(\)/, "The countdown must not run during any cinematic shot or the chase transition");
+assert.match(raceDirectorSource, /if \(countdownPending\.current\)[\s\S]*startRaceSequence\(\)[\s\S]*onCinematicComplete\(\)/, "The HUD and countdown must start only on the frame after the chase camera is reached");
+assert.doesNotMatch(raceCinematicSource, /new (?:Vector3|THREE\.Vector3)/, "The cinematic camera loop must reuse camera vectors without per-frame vector allocations");
+assert.match(raceAudioSource, /function scheduleSynthVoice\([\s\S]*if \(!ctx \|\| !master[\s\S]*ctx\.createOscillator\(\)[\s\S]*oscillator\.onended[\s\S]*oscillator\.disconnect\(\)[\s\S]*envelope\.disconnect\(\)/, "Procedural countdown voices must use the shared context and release their one-shot nodes");
+assert.match(raceAudioSource, /const frequency = value >= 3 \? 440 : value === 2 \? 660 : 880[\s\S]*scheduleSynthVoice\(frequency, frequency, 0\.1/, "The countdown must use the specified red, yellow, and green pitches for 100 ms");
+assert.match(raceAudioSource, /scheduleSynthVoice\(1200, 1760, 0\.3[\s\S]*scheduleSynthVoice\(2400, 3520/, "T-0 GO must use a bright 300 ms sweep and harmonic");
+assert.equal((raceAudioSource.match(/new Ctor\(\)/g) ?? []).length, 1, "AudioContext construction must remain centralized rather than happening per countdown event");
+assert.match(raceAudioSource, /lastCountdownTone\?\.value === value[\s\S]*wallNow - lastCountdownTone\.at < 120/, "StrictMode effect replay must not double-play the initial countdown tone");
+assert.match(raceDirectorSource, /RACE_FRAME_INTERVAL = 1000 \/ 60[\s\S]*setTimeout\(\(\) => \{[\s\S]*state\.invalidate\(\)/, "Demand rendering should target smooth 60 fps race updates");
 const raceSceneReadySource = raceDirectorSource.slice(raceDirectorSource.indexOf("export const RaceSceneReady"), raceDirectorSource.indexOf("export const RaceVehicleRig"));
 assert.match(raceSceneReadySource, /}, 0\);/, "RaceSceneReady must not take over R3F's render loop and leave a stale garage frame on screen");
 const raceEngineSource = fs.readFileSync("src/three/raceEngine.ts", "utf8");
 const raceHudSource = fs.readFileSync("src/components/RaceHud.tsx", "utf8");
+const raceTrackSource = fs.readFileSync("src/three/raceTrack.ts", "utf8");
+const raceCircuitSource = fs.readFileSync("src/three/RaceCircuit.tsx", "utf8");
+const raceAssetsSource = fs.readFileSync("src/three/raceAssets.ts", "utf8");
+assert.match(raceCircuitSource, /const RAIN_COUNT = 700[\s\S]*new BufferAttribute\(rainPositions, 3\)\.setUsage\(DynamicDrawUsage\)/, "Rain particles must stay lightweight for race performance");
+assert.match(raceCircuitSource, /const LIGHT_POOL = 2/, "Street-light pooling must limit per-fragment lighting work");
+assert.match(appSource, /dpr=\{raceMode \? 0\.9/, "Race mode should render slightly below native pixel density to preserve GPU headroom");
+assert.match(raceAssetsSource, /texture\.anisotropy = 2/, "Circuit textures should use modest anisotropic filtering for lower GPU cost");
+assert.match(raceAssetsSource, /for \(let i = 0; i < 6000; i\+\+\)[\s\S]*for \(let i = 0; i < 1200; i\+\+\)/, "Race textures must use fewer canvas speckles to shorten first circuit preparation");
+assert.match(raceEngineSource, /START_GRID_CLEARANCE = 7\.5[\s\S]*START_GRID_ROW_SPACING = 6\.4[\s\S]*function startingGridIndex\(row = 0\)[\s\S]*Math\.round\(START_GRID_CLEARANCE \/ SEGMENT_LENGTH\)[\s\S]*Math\.round\(\(row \* START_GRID_ROW_SPACING\) \/ SEGMENT_LENGTH\)/, "The staggered grid must start safely behind the stripe with realistic row spacing");
+assert.match(raceEngineSource, /function placeAi\([\s\S]*const blend = wrapped - sample[\s\S]*const centerX = samples\[index\][\s\S]*samples\[nextIndex\][\s\S]*headingAt\(sample, blend\)[\s\S]*AI_LATERAL_LIMIT/, "Opponents must interpolate smoothly between road samples and stay within a safe asphalt corridor");
+assert.match(raceCircuitSource, /geometry=\{data\.startLineGeometry\}[\s\S]*placementAt\(0, 0, 0\.02\)/, "The checkered start stripe must stay perpendicular to the grid");
+assert.match(raceTrackSource, /function writeDashedCenterline[\s\S]*dashStrideSamples = 8[\s\S]*centerDashes = false[\s\S]*if \(centerDashes\) writeDashedCenterline[\s\S]*export function buildRoadMarkings\(\)[\s\S]*\], true\);/, "Race roads must show subtle center dashes while keeping the markings in one geometry");
+assert.match(raceHudSource, /top-\[15%\][\s\S]*\[0, 1, 2, 3, 4\]\.map[\s\S]*countdown >= 3[\s\S]*border-red-100[\s\S]*countdown === 2[\s\S]*border-amber-100[\s\S]*border-emerald-100/, "All five fixed start lamps must stay illuminated and change red, yellow, then green");
+assert.doesNotMatch(raceHudSource, /Start lights ·/, "Remove the visible Start lights countdown label below the lamps");
+assert.doesNotMatch(raceHudSource, /GO!/, "The countdown traffic-light panel should remain in place without a separate GO overlay");
+assert.doesNotMatch(raceHudSource, /key=\{countdown\}|race-count/, "The countdown panel must remain steady instead of blinking or replaying its pop animation each second");
+const raceHudStyles = fs.readFileSync("src/index.css", "utf8");
+assert.doesNotMatch(raceHudStyles, /race-count-pop|\.race-count/, "The countdown panel itself must remain steady instead of blinking");
+assert.match(raceHudSource, /key=\{`\$\{countdown\}-\$\{light\}`\}[\s\S]*race-start-light h-6/, "Each countdown tick must restart the lamp blink without remounting the panel");
+assert.match(raceHudStyles, /@keyframes race-start-light-blink[\s\S]*49%[\s\S]*opacity: 1[\s\S]*50%[\s\S]*opacity: 0[\s\S]*animation: race-start-light-blink 1s steps\(1, end\) both/, "Each countdown value must light the lamps, then turn them fully off before the next second with a lightweight CSS animation");
+assert.match(raceEngineSource, /export function prepareRaceGrid\(\)[\s\S]*race\.phase = "idle"[\s\S]*raceDrive\.active = true[\s\S]*export function startRaceSequence\(\)/, "The cars must be visible on the grid during the cinematic without starting the countdown early");
+assert.match(raceEngineSource, /race\.countdown = 5[\s\S]*Math\.ceil\(5 - race\.countdownTimer[\s\S]*race\.countdownTimer >= 5[\s\S]*race\.countdown = 0[\s\S]*emit\(\{ type: "go" \}\)/, "The green light must hold for one second and GO must release the grid at T-0");
 assert.match(raceDirectorSource, /case "ShiftLeft":[\s\S]*?held\.drift = true/, "Shift must engage the drift handbrake");
 assert.match(raceDirectorSource, /case "KeyQ":[\s\S]*?activateTurbo\(\)/, "Q must activate the turbo burst");
 assert.match(raceHudSource, /nitroPercentRef[\s\S]*?READY · USE Q/, "The HUD must clearly show turbo charge and when it is ready to use");
@@ -376,19 +445,32 @@ assert.match(raceOpponentsSource, /raceSession\.carLightsOn[\s\S]*material\.emis
 assert.match(raceOpponentsSource, /function makeOpponentHeadlightRig[\s\S]*target\.position\.set[\s\S]*spot\.target = target[\s\S]*rig\.add\(target, spot\)/, "Opponent headlights must project real spot beams from scene-attached targets");
 assert.match(raceOpponentsSource, /beam\.intensity = headlightsOn \? HEADLIGHT_LOW_BEAM : 0[\s\S]*headlightRig/, "Opponent spot beams and emitters must switch together with race lights");
 assert.match(appSource, /<RaceOpponents \/>[\s\S]*<RaceSceneReady onReady=\{onRaceSceneReady\} \/>/, "The race must wait for the mounted scene to warm before dismissing the loading screen");
+assert.match(appSource, /!raceLoading && <RaceDirector onCinematicComplete=\{onRaceCinematicComplete\} \/>[\s\S]*!raceLoading && <NitroPlumes \/>/, "The race director must stage the cinematic after circuit loading completes");
+assert.match(appSource, /raceMode && !raceLoading && !raceCinematic && \([\s\S]*<RaceHud/, "The gameplay HUD must remain hidden until the cinematic finishes and countdown begins");
 assert.match(appSource, /setRaceLoading\(true\)[\s\S]*setRaceMode\(true\)/, "Start Race must show a loading overlay before mounting the circuit");
 assert.match(appSource, /\{raceLoading && <RaceLoadingScreen sceneReady=\{raceSceneReady\} onComplete=\{onRaceLoadingComplete\} \/>\}/, "A visible loading screen must cover the first expensive race frames until ready and complete");
 const raceLoadingScreenSource = fs.readFileSync("src/components/RaceLoadingScreen.tsx", "utf8");
 assert.match(raceLoadingScreenSource, /useState\(1\)[\s\S]*next = 1 \+ Math\.floor[\s\S]*next = 92 \+ Math\.floor\(finish \* 8\)[\s\S]*setProgress/, "Race loading must animate the percentage from 1 through 100");
 assert.match(raceLoadingScreenSource, /backgroundImage: `linear-gradient[\s\S]*RACE_LOADING_IMAGE[\s\S]*backgroundSize: "cover"/, "Race loading must use a full-screen race image background");
 assert.match(raceLoadingScreenSource, /aria-valuemin=\{1\}[\s\S]*aria-valuemax=\{100\}[\s\S]*aria-valuenow=\{progress\}/, "The animated loading bar must expose accessible 1-to-100 progress");
-assert.match(raceDirectorSource, /export const RaceSceneReady[\s\S]*setTimeout\(onReady, 900\)/, "The loading screen must remain until the race scene has had time to render and warm");
+assert.match(raceDirectorSource, /export const RaceSceneReady[\s\S]*setInterval\(invalidate, 80\)[\s\S]*renderedFrames\.current < 2[\s\S]*setTimeout\(onReady, 450\)/, "Race loading must actively render and warm the scene before completing, without stalling on demand rendering");
 const raceOpponentCarsSource = fs.readFileSync("src/data/raceOpponentCars.ts", "utf8");
 assert.match(raceOpponentCarsSource, /id: "porsche-911-turbo-930"[\s\S]*id: "bugatti-chiron"/, "Both requested supercar models must be in the race-only opponent roster");
 assert.match(appSource, /warmRaceCircuit\(raceSetupMap\)[\s\S]*await opponentAssets[\s\S]*setRaceSetupReady\(true\)[\s\S]*requestIdleCallback/, "Race geometry and opponent models must prepare before the Start Race button is enabled");
 assert.match(appSource, /disabled=\{!raceSetupReady \|\| o \|\| !I/, "Start Race must wait for track and car preloading to finish");
 assert.match(fs.readFileSync("src/three/RaceCircuit.tsx", "utf8"), /export function warmRaceCircuit[\s\S]*circuitData\(\)[\s\S]*selectRaceTrack\(previousMapId\)/, "Race track geometry must be cached while the setup screen is open");
 assert.match(raceEngineSource, /braking: new Uint8Array\(AI_COUNT\)[\s\S]*raceAi\.braking\[car\] = speedError < -0\.08/, "AI braking telemetry must drive opponent brake lights without React state");
+assert.match(raceEngineSource, /START_GRID_ROW_SPACING = 6\.4[\s\S]*PLAYER_GRID_LATERAL = -1\.65[\s\S]*AI_GRID_LATERAL = 1\.65[\s\S]*function resetAi\(\)[\s\S]*const row = car === 0 \? 0 : 1[\s\S]*const gridLane = AI_GRID_LATERAL[\s\S]*placeAi\(car, gridIndex, gridLane\)/, "The start grid must alternate left, right, left across its two road sides");
+assert.match(raceEngineSource, /laneCenter: -1\.8, laneSwing: 2\.5[\s\S]*laneCenter: 2\.2, laneSwing: 2\.4[\s\S]*const laneChoice =[\s\S]*coursePhase[\s\S]*MathUtils\.clamp\(laneChoice/, "AI opponents must choose different evolving lanes rather than follow one fixed racing line");
+assert.match(raceEngineSource, /target \*= 1 \+ MathUtils\.clamp\(gap \* 0\.55, -0\.18, 0\.18\)/, "Opponents must remain within a credible racing distance without teleporting");
+assert.match(raceDirectorSource, /Angle 1: low right-front quarter[\s\S]*cameraY = raceDrive\.y \+ 0\.42[\s\S]*Angle 2: a hard cut to the left profile[\s\S]*const angle = -Math\.PI \/ 2 \+ 0\.24 \* eased[\s\S]*Angle 3: eagle-eye establishing shot[\s\S]*gridCenterX = \(raceDrive\.x \+ raceAi\.x\[0\] \+ raceAi\.x\[1\]\) \/ 3[\s\S]*Angle 4: third-person rear chase framing[\s\S]*cameraX = raceDrive\.x - camForward\.x \* 6\.5[\s\S]*Blend from the rear third-person shot into the main chase rig over half a second/, "The pre-race camera must show the right, left, all-cars eagle-eye, and rear views in order");
+assert.match(raceDirectorSource, /camera\.up\.set\(0, 1, 0\)[\s\S]*camera\.lookAt\(camLook\)/, "Race cameras must use world-up orientation to keep the horizon stable");
+assert.doesNotMatch(raceDirectorSource, /camera\.rotation\.z\s*=|mount\.roll/, "Camera framing must not force Euler roll values that can flip the rendered view");
+assert.match(raceEngineSource, /COLLISION_HALF_LENGTH = 2\.25[\s\S]*COLLISION_HALF_WIDTH = 0\.96[\s\S]*function findCarContact[\s\S]*overlapOnContactAxis/, "Race collisions must use oriented vehicle footprints rather than point-distance triggers");
+assert.match(raceEngineSource, /function resolvePlayerOpponentContacts[\s\S]*vehicle\.velX -= normalX \* impulse[\s\S]*applyAiImpact/, "Player-to-opponent impacts must transfer momentum and slow both vehicles");
+assert.match(raceEngineSource, /function resolveOpponentContact[\s\S]*emit\(\{ type: "opponentCrash", strength \}\)/, "Opponent-to-opponent impacts must also transfer momentum and trigger feedback");
+assert.match(raceOpponentsSource, /node\.rotation\.z = raceAi\.impactSide\[slot\] \* impact/, "Opponent models must visibly jolt when struck");
+assert.match(raceHudSource, /event\.type === "opponentCrash"[\s\S]*triggerCrashImpact/, "Rival collisions must produce HUD and audio feedback");
 for (const model of ["porsche-911-turbo-1975.glb", "bugatti-chiron.glb"]) {
   const bytes = fs.readFileSync(`public/models/race/${model}`);
   assert.equal(bytes.toString("ascii", 0, 4), "glTF", `${model} must be a valid bundled GLB`);
@@ -404,14 +486,100 @@ assert.match(raceEngineSource, /const cleanDriving =[\s\S]*?linePrecision > 0 &&
 assert.doesNotMatch(raceEngineSource, /nitroCooldown|nitroLocked|crashLock|crashTurboLockout/, "Turbo must recharge through driving, not a timed cooldown");
 assert.match(raceEngineSource, /vehicle\.nitro = 0;[\s\S]*?vehicle\.boostTimer = 0;/, "A crash must cancel boost and drain the remaining turbo reserve");
 assert.equal(raceEngineModule.CAR.slideDrag, 0.004, "Lateral tyre scrub must not drain speed sharply during normal turns");
+raceEngineModule.prepareRaceGrid();
+assert.equal(raceEngineModule.racePhase(), "idle", "Staging the cinematic must not start the countdown yet");
+assert.equal(raceEngineModule.raceDrive.active, true, "The staged player and opponents must be visible during the cinematic");
+const stagedPlayerPosition = [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z];
+raceEngineModule.stepRace(0.05);
+assert.deepEqual([raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z], stagedPlayerPosition, "The staged cars must remain stationary until the cinematic ends");
+const initialCountdownEvents = [];
+const unsubscribeInitialCountdown = raceEngineModule.subscribeRace((event) => {
+  if (event.type === "countdown") initialCountdownEvents.push(event.value);
+});
+raceEngineModule.startRaceSequence();
+unsubscribeInitialCountdown();
+assert.deepEqual(initialCountdownEvents, [5], "The sequence must emit T-5 immediately so the first red tone is synchronized");
+const frontGridSample = Math.round(raceEngineModule.raceAi.startIndex[0]) % raceTrackModule.SAMPLE_COUNT;
+const frontGridOffset = frontGridSample * 7;
+const startLineClearance = Math.hypot(
+  raceTrackModule.samples[frontGridOffset] - raceTrackModule.samples[0],
+  raceTrackModule.samples[frontGridOffset + 2] - raceTrackModule.samples[2],
+);
+assert(startLineClearance > 6, "The front-row cars must have visible space before the start/finish stripe");
+const frontTangentLength = Math.hypot(raceTrackModule.samples[frontGridOffset + 3], raceTrackModule.samples[frontGridOffset + 5]);
+const frontForwardX = raceTrackModule.samples[frontGridOffset + 3] / frontTangentLength;
+const frontForwardZ = raceTrackModule.samples[frontGridOffset + 5] / frontTangentLength;
+const frontLeftX = raceTrackModule.samples[frontGridOffset + 5] / frontTangentLength;
+const frontLeftZ = -raceTrackModule.samples[frontGridOffset + 3] / frontTangentLength;
+const frontCars = [
+  [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z],
+  [raceEngineModule.raceAi.x[0], raceEngineModule.raceAi.z[0]],
+];
+const frontLanes = frontCars.map(([x, z]) => (x - raceTrackModule.samples[frontGridOffset]) * frontLeftX + (z - raceTrackModule.samples[frontGridOffset + 2]) * frontLeftZ);
+assert.deepEqual(frontLanes.map((lane) => Math.round(lane * 100) / 100), [-1.65, 1.65], "The front row must be two-wide with even lane spacing");
+const frontRows = frontCars.map(([x, z]) => (x - raceTrackModule.samples[frontGridOffset]) * frontForwardX + (z - raceTrackModule.samples[frontGridOffset + 2]) * frontForwardZ);
+assert(frontRows.every((row) => Math.abs(row) < 0.01), "The front pair must line up level across the road");
+assert(Math.abs(raceEngineModule.raceAi.indexFloat[0] - frontGridSample) < 0.01, "The lead opponent must start in the front grid row");
+const rearGridSample = Math.round(raceEngineModule.raceAi.startIndex[1]) % raceTrackModule.SAMPLE_COUNT;
+const rowSpacingSamples = (frontGridSample - rearGridSample + raceTrackModule.SAMPLE_COUNT) % raceTrackModule.SAMPLE_COUNT;
+assert(rowSpacingSamples * raceTrackModule.SEGMENT_LENGTH > 6 && rowSpacingSamples * raceTrackModule.SEGMENT_LENGTH < 9, "The third car must sit one realistic grid row behind");
+assert(Math.abs(raceEngineModule.raceAi.lateral[1] - 1.65) < 0.01, "The third car must return to the left-hand grid column after the player on the right");
+assert(raceEngineModule.raceTelemetry.progress < 0.001, "The grid offset must not make the HUD start partway around the lap");
+const startSignals = [];
+const unsubscribeStartSignals = raceEngineModule.subscribeRace((event) => {
+  if (event.type === "countdown" || event.type === "go") startSignals.push(event);
+});
+for (let frame = 0; frame < 174; frame++) raceEngineModule.stepRace(1 / 60);
+assert.equal(raceEngineModule.racePhase(), "countdown", "The red lights must hold for the first three seconds");
+assert.equal(raceEngineModule.raceTelemetry.countdown, 3, "Three seconds into the start sequence the red light is still active");
+for (let frame = 0; frame < 12; frame++) raceEngineModule.stepRace(1 / 60);
+assert.equal(raceEngineModule.raceTelemetry.countdown, 2, "The yellow light must show at two seconds remaining");
+for (let frame = 0; frame < 60; frame++) raceEngineModule.stepRace(1 / 60);
+assert.equal(raceEngineModule.racePhase(), "countdown", "The green light must remain in the final readiness second");
+assert.equal(raceEngineModule.raceTelemetry.countdown, 1, "The green lamp must hold at one second before GO");
+assert(!startSignals.some((event) => event.type === "go"), "GO must not sound before the green second finishes");
+for (let frame = 0; frame < 54; frame++) raceEngineModule.stepRace(1 / 60);
+assert.equal(raceEngineModule.racePhase(), "racing", "The race must begin at T-0 after the green-light second");
+assert.equal(raceEngineModule.raceTelemetry.countdown, 0, "The traffic-light countdown clears at GO");
+assert(startSignals.some((event) => event.type === "go"), "GO must emit the engine-release signal at T-0");
+unsubscribeStartSignals();
+for (const mapId of ["maranello", "riviera", "alpine"]) {
+  assert(raceTrackModule.selectRaceTrack(mapId), `${mapId} must remain available for opponent route checks`);
+  raceEngineModule.startRaceSequence();
+  for (let frame = 0; frame < 306; frame++) raceEngineModule.stepRace(1 / 60);
+  raceEngineModule.raceInput.throttle = 0.3;
+  let previousPositions = Array.from({ length: raceEngineModule.AI_COUNT }, (_, car) => [raceEngineModule.raceAi.x[car], raceEngineModule.raceAi.z[car]]);
+  for (let frame = 0; frame < 240; frame++) {
+    raceEngineModule.stepRace(1 / 60);
+    for (let car = 0; car < raceEngineModule.AI_COUNT; car++) {
+      const x = raceEngineModule.raceAi.x[car];
+      const z = raceEngineModule.raceAi.z[car];
+      const [previousX, previousZ] = previousPositions[car];
+      const movement = Math.hypot(x - previousX, z - previousZ);
+      assert(movement < 1.4, `${mapId} opponent ${car} must move continuously without sample-to-sample jumps (${movement} m/frame)`);
+      const roadPosition = raceTrackModule.projectOnTrackFull(x, z);
+      assert(Math.abs(roadPosition.lateral) < 5.8, `${mapId} opponent ${car} must stay safely within the drivable road (${roadPosition.lateral} m from centre)`);
+      previousPositions[car] = [x, z];
+    }
+  }
+}
+assert(raceTrackModule.selectRaceTrack("maranello"), "Restore the default route after opponent checks");
 for (const steer of [1, -1]) {
   raceEngineModule.startRaceSequence();
-  for (let frame = 0; frame < 190; frame++) raceEngineModule.stepRace(1 / 60);
+  for (let frame = 0; frame < 306; frame++) raceEngineModule.stepRace(1 / 60);
+  let playerContacts = 0;
+  const unsubscribeContacts = raceEngineModule.subscribeRace((event) => {
+    if (event.type === "crash" && event.source === "vehicle") playerContacts++;
+  });
   raceEngineModule.raceInput.throttle = 1;
   raceEngineModule.raceInput.steer = steer;
   for (let frame = 0; frame < 90; frame++) raceEngineModule.stepRace(1 / 60);
-  assert(raceEngineModule.raceTelemetry.speedKph > 45, "Left and right steering should retain speed through a clean turn");
-  assert(raceEngineModule.raceTelemetry.crashFx === 0, "Normal steering must not trigger a barrier crash on the opening straight");
+  unsubscribeContacts();
+  assert(Number.isFinite(raceEngineModule.raceTelemetry.speedKph) && raceEngineModule.raceTelemetry.speedKph > 0, "Steering either direction must keep race speed finite and responsive");
+  if (steer === 1) {
+    assert(playerContacts > 0, "Steering into the opponent must register a car-to-car impact");
+    assert(raceEngineModule.raceTelemetry.speedKph < 45, "A car-to-car impact must noticeably slow the player");
+  }
 }
 const initialWeather = raceSessionModule.raceSession.envIndex;
 const initialMap = raceSessionModule.raceSession.mapId;
@@ -436,7 +604,7 @@ raceSessionModule.lockRaceConditions(false);
 raceSessionModule.setEnvironment(initialWeather);
 raceSessionModule.setRaceMap(initialMap);
 raceEngineModule.startRaceSequence();
-for (let frame = 0; frame < 190; frame++) raceEngineModule.stepRace(1 / 60);
+for (let frame = 0; frame < 306; frame++) raceEngineModule.stepRace(1 / 60);
 assert.equal(raceEngineModule.racePhase(), "racing", "The standing countdown must reach the race phase");
 raceEngineModule.raceInput.throttle = 0.25;
 function steerAlongTrack() {
@@ -449,6 +617,8 @@ function steerAlongTrack() {
   raceEngineModule.raceInput.steer = Math.max(-1, Math.min(1, error * 1.5 - probe.lateral * 0.1));
 }
 for (let frame = 0; frame < 80; frame++) {
+  raceEngineModule.raceAi.lateral[0] = 8;
+  raceEngineModule.raceAi.lateral[1] = -8;
   steerAlongTrack();
   raceEngineModule.stepRace(1 / 60);
 }
@@ -458,6 +628,8 @@ assert.equal(raceEngineModule.raceTelemetry.nitro, 0, "Turbo must consume its fi
 assert.equal(raceEngineModule.raceTelemetry.turboReady, false, "Turbo must not be unlimited after firing");
 assert.equal(raceEngineModule.activateTurbo(), false, "Turbo cannot fire again before its driving-earned charge returns");
 for (let frame = 0; frame < 900; frame++) {
+  raceEngineModule.raceAi.lateral[0] = 8;
+  raceEngineModule.raceAi.lateral[1] = -8;
   steerAlongTrack();
   raceEngineModule.stepRace(1 / 60);
 }

@@ -23,6 +23,7 @@ import {
   SAMPLE_COUNT,
   SEGMENT_LENGTH,
   TOTAL_LAPS,
+  TRACK_HALF_WIDTH,
   WALL_OFFSET,
   checkpointSample,
   curvatureAt,
@@ -37,6 +38,8 @@ export type RacePhase = "idle" | "countdown" | "racing" | "paused" | "finished";
 
 /** Car centre may travel this far from the centreline before it hits a barrier. */
 const LATERAL_LIMIT = WALL_OFFSET - 0.26 - CAR_HALF_WIDTH;
+// Keep opponents' full body inside the asphalt even after a contact shunt.
+const AI_LATERAL_LIMIT = Math.min(5.25, TRACK_HALF_WIDTH - CAR_HALF_WIDTH - 0.3);
 
 /** Two AI supercars share the grid with the player. */
 export const AI_COUNT = 2;
@@ -88,7 +91,8 @@ export type RaceEvent =
   | { type: "lap"; lap: number; lapTime: number; best: boolean }
   | { type: "finish"; summary: RaceSummary }
   | { type: "phase"; phase: RacePhase }
-  | { type: "crash"; strength: number };
+  | { type: "crash"; strength: number; source: "barrier" | "vehicle" }
+  | { type: "opponentCrash"; strength: number };
 
 /** Digital input, written by <RaceDirector/>'s keyboard listeners. */
 export const raceInput = {
@@ -151,24 +155,24 @@ export const raceTelemetry = {
   drift: 0,
   handbraking: false,
   phase: "idle" as RacePhase,
-  countdown: 3,
+  countdown: 5,
   lapTimes: [] as number[],
 };
 
 /**
  * AI opponents.
  *
- * They are pure station-keeping actors on the same centreline polyline the
- * player is projected onto: each tick they look a short window ahead for the
- * sharpest curvature, brake to the corner speed it implies and advance their
- * index. That is ~30 table reads per car per frame — no rigid bodies, no
- * raycasts, and the state lives in flat typed arrays so nothing allocates.
+ * They race around the selected circuit, but use independent, slowly changing
+ * lateral lane choices rather than a single baked racing line. Each tick they
+ * look ahead for curvature, brake to a safe corner speed and move smoothly
+ * between lines. The state stays in flat typed arrays: no rigid bodies or
+ * raycasts, and no per-frame object allocation.
  */
 const AI_SKILL = [
   /** Quick: a clean lap plus a well-timed turbo burst is needed to beat it. */
-  { top: 60, accel: 13.5, latAccel: 16.5, line: 2.7 },
-  /** Slower, drives the other side of the road so the pack reads as traffic. */
-  { top: 56, accel: 11.5, latAccel: 13.2, line: -2.5 },
+  { top: 60, accel: 13.5, latAccel: 16.5, laneCenter: -1.8, laneSwing: 2.5 },
+  /** Slower, takes a different changing line and leaves room for the pack. */
+  { top: 56, accel: 11.5, latAccel: 13.2, laneCenter: 2.2, laneSwing: 2.4 },
 ];
 
 export const raceAi = {
@@ -178,6 +182,11 @@ export const raceAi = {
   heading: new Float32Array(AI_COUNT),
   speed: new Float32Array(AI_COUNT),
   braking: new Uint8Array(AI_COUNT),
+  startLinePassed: new Uint8Array(AI_COUNT),
+  startIndex: new Float32Array(AI_COUNT),
+  gridLap: new Float32Array(AI_COUNT),
+  impact: new Float32Array(AI_COUNT),
+  impactSide: new Float32Array(AI_COUNT),
   indexFloat: new Float32Array(AI_COUNT),
   lap: new Float32Array(AI_COUNT),
   lateral: new Float32Array(AI_COUNT),
@@ -186,6 +195,16 @@ export const raceAi = {
   finished: new Uint8Array(AI_COUNT),
   wobble: new Float32Array(AI_COUNT),
 };
+
+const COLLISION_HALF_LENGTH = 2.25;
+const COLLISION_HALF_WIDTH = 0.96;
+const START_GRID_CLEARANCE = 7.5;
+const START_GRID_ROW_SPACING = 6.4;
+const PLAYER_GRID_LATERAL = -1.65;
+const AI_GRID_LATERAL = 1.65;
+const PLAYER_AI_CONTACT_LATCH = new Uint8Array(AI_COUNT);
+let OPPONENT_CONTACT_LATCH = 0;
+const CONTACT = { normalX: 0, normalZ: 0, penetration: 0 };
 
 const vehicle = {
   x: 0,
@@ -218,7 +237,7 @@ const vehicle = {
 
 const race = {
   phase: "idle" as RacePhase,
-  countdown: 3,
+  countdown: 5,
   countdownTimer: 0,
   cpPassed: 0,
   lap: 1,
@@ -229,6 +248,8 @@ const race = {
   lapTimes: [] as number[],
   accumulator: 0,
   finishers: 0,
+  gridStartIndex: 0,
+  gridLap: 0,
 };
 
 const listeners = new Set<(event: RaceEvent) => void>();
@@ -264,19 +285,25 @@ export function gearForSpeed(speedKph: number) {
   return GEAR_BANDS.length - 1;
 }
 
-/** Parks the car on the start/finish line with a fully charged turbo. */
+function startingGridIndex(row = 0) {
+  const clearanceSamples = Math.max(1, Math.round(START_GRID_CLEARANCE / SEGMENT_LENGTH));
+  const rowSamples = Math.round((row * START_GRID_ROW_SPACING) / SEGMENT_LENGTH);
+  return (SAMPLE_COUNT - clearanceSamples - rowSamples + SAMPLE_COUNT) % SAMPLE_COUNT;
+}
+
+/** Stages the player behind the start stripe with a fully charged turbo. */
 export function resetVehicle() {
-  const o = 0;
-  const tx = samples[o + 3];
-  const tz = samples[o + 5];
+  const gridIndex = startingGridIndex();
+  const gridOffset = gridIndex * 7;
+  const tx = samples[gridOffset + 3];
+  const tz = samples[gridOffset + 5];
   const horizontal = Math.hypot(tx, tz) || 1;
   const leftX = tz / horizontal;
   const leftZ = -tx / horizontal;
-  const lateral = -2.2;
-  vehicle.x = samples[o] + leftX * lateral;
-  vehicle.z = samples[o + 2] + leftZ * lateral;
-  vehicle.y = samples[o + 1];
-  vehicle.heading = headingAt(0, 0);
+  vehicle.x = samples[gridOffset] + leftX * PLAYER_GRID_LATERAL;
+  vehicle.y = roadHeightAt(gridIndex, 0);
+  vehicle.z = samples[gridOffset + 2] + leftZ * PLAYER_GRID_LATERAL;
+  vehicle.heading = headingAt(gridIndex, 0);
   vehicle.velX = 0;
   vehicle.velZ = 0;
   vehicle.vLong = 0;
@@ -287,9 +314,9 @@ export function resetVehicle() {
   vehicle.crashEventCooldown = 0;
   vehicle.boostFx = 0;
   vehicle.crashFx = 0;
-  vehicle.hint = 0;
-  vehicle.prevIndex = 0;
-  vehicle.indexFloat = 0;
+  vehicle.hint = gridIndex;
+  vehicle.prevIndex = gridIndex;
+  vehicle.indexFloat = gridIndex;
   vehicle.wrongWayTimer = 0;
   vehicle.longAccel = 0;
   vehicle.previousVLong = 0;
@@ -298,6 +325,8 @@ export function resetVehicle() {
   vehicle.speedSamples = 0;
   vehicle.boosting = false;
   race.accumulator = 0;
+  race.gridStartIndex = gridIndex;
+  race.gridLap = 0;
   race.cpPassed = 0;
   race.lap = 1;
   race.lapTime = 0;
@@ -321,18 +350,31 @@ export function resetVehicle() {
   syncDrive();
 }
 
-/** 3 → 2 → 1 → GO! : the classic standing start. */
+/** Stage the cars for the pre-race camera without starting the countdown. */
+export function prepareRaceGrid() {
+  resetVehicle();
+  race.phase = "idle";
+  race.countdown = 5;
+  race.countdownTimer = 0;
+  raceTelemetry.phase = "idle";
+  raceTelemetry.countdown = 5;
+  raceTelemetry.wrongWay = false;
+  raceDrive.active = true;
+  syncDrive();
+}
+
+/** Five-second start: red 5–3, yellow 2, green 1, then GO at T-0. */
 export function startRaceSequence() {
   resetVehicle();
   race.phase = "countdown";
-  race.countdown = 3;
+  race.countdown = 5;
   race.countdownTimer = 0;
   raceTelemetry.phase = "countdown";
-  raceTelemetry.countdown = 3;
+  raceTelemetry.countdown = 5;
   raceTelemetry.wrongWay = false;
   raceDrive.active = true;
   emit({ type: "phase", phase: "countdown" });
-  emit({ type: "countdown", value: 3 });
+  emit({ type: "countdown", value: 5 });
 }
 
 export function restartRace() {
@@ -369,27 +411,51 @@ export function pauseRace(paused: boolean) {
   }
 }
 
-/** Paints one opponent onto the centreline at `indexFloat` + `lateral`. */
+/** Place an opponent smoothly between track samples at `indexFloat` + `lateral`. */
 function placeAi(car: number, indexFloat: number, lateral: number) {
-  raceAi.indexFloat[car] = indexFloat;
-  raceAi.lateral[car] = lateral;
-  const index = (((Math.round(indexFloat) % SAMPLE_COUNT) + SAMPLE_COUNT) % SAMPLE_COUNT) * 7;
-  const tx = samples[index + 3];
-  const tz = samples[index + 5];
+  const wrapped = ((indexFloat % SAMPLE_COUNT) + SAMPLE_COUNT) % SAMPLE_COUNT;
+  const safeLateral = MathUtils.clamp(lateral, -AI_LATERAL_LIMIT, AI_LATERAL_LIMIT);
+  const sample = Math.floor(wrapped);
+  const blend = wrapped - sample;
+  const index = sample * 7;
+  const nextIndex = ((sample + 1) % SAMPLE_COUNT) * 7;
+  const tx = samples[index + 3] + (samples[nextIndex + 3] - samples[index + 3]) * blend;
+  const tz = samples[index + 5] + (samples[nextIndex + 5] - samples[index + 5]) * blend;
   const horizontal = Math.hypot(tx, tz) || 1;
-  raceAi.x[car] = samples[index] + (tz / horizontal) * lateral;
-  raceAi.z[car] = samples[index + 2] + (-tx / horizontal) * lateral;
-  raceAi.y[car] = samples[index + 1];
-  raceAi.heading[car] = headingAt(Math.round(indexFloat), 0);
+  const centerX = samples[index] + (samples[nextIndex] - samples[index]) * blend;
+  const centerZ = samples[index + 2] + (samples[nextIndex + 2] - samples[index + 2]) * blend;
+  raceAi.indexFloat[car] = wrapped;
+  raceAi.lateral[car] = safeLateral;
+  raceAi.x[car] = centerX + (tz / horizontal) * safeLateral;
+  raceAi.z[car] = centerZ + (-tx / horizontal) * safeLateral;
+  raceAi.y[car] = roadHeightAt(sample, blend);
+  raceAi.heading[car] = headingAt(sample, blend);
 }
 
-/** Two rows of two: one opponent alongside, one a row back. */
+function relativeRaceIndex(index: number, startIndex = race.gridStartIndex) {
+  let relative = index - startIndex;
+  if (relative < 0) relative += SAMPLE_COUNT;
+  else if (relative >= SAMPLE_COUNT) relative -= SAMPLE_COUNT;
+  return relative;
+}
+
+/** Stage a realistic two-column grid: two cars up front and the third behind. */
 function resetAi() {
+  OPPONENT_CONTACT_LATCH = 0;
   for (let car = 0; car < AI_COUNT; car++) {
-    const front = car === 0;
-    placeAi(car, front ? 0 : SAMPLE_COUNT - 6, front ? 2.2 : -2.2);
+    const row = car === 0 ? 0 : 1;
+    const gridIndex = startingGridIndex(row);
+    // Alternate sides as the rows recede: opponent left, player right, rival left.
+    const gridLane = AI_GRID_LATERAL;
+    placeAi(car, gridIndex, gridLane);
+    raceAi.startIndex[car] = gridIndex;
     raceAi.speed[car] = 0;
     raceAi.braking[car] = 0;
+    raceAi.startLinePassed[car] = 0;
+    raceAi.gridLap[car] = 0;
+    raceAi.impact[car] = 0;
+    raceAi.impactSide[car] = 0;
+    PLAYER_AI_CONTACT_LATCH[car] = 0;
     raceAi.lap[car] = 1;
     raceAi.progress[car] = 0;
     raceAi.finishTime[car] = 0;
@@ -400,7 +466,7 @@ function resetAi() {
 
 /** One AI tick — only ever called while the race is actually running. */
 function stepAi(dt: number) {
-  const playerProgress = race.lap - 1 + vehicle.indexFloat / SAMPLE_COUNT;
+  const playerProgress = race.gridLap + relativeRaceIndex(vehicle.indexFloat) / SAMPLE_COUNT;
   for (let car = 0; car < AI_COUNT; car++) {
     const skill = AI_SKILL[car];
     const index = raceAi.indexFloat[car];
@@ -417,44 +483,217 @@ function stepAi(dt: number) {
     const corner = Math.sqrt(skill.latAccel / Math.max(curvature, 0.0009));
     let target = Math.min(skill.top, corner);
 
-    // Gentle rubber banding keeps the pack in sight without feeling scripted.
-    const gap = playerProgress - (raceAi.lap[car] - 1 + index / SAMPLE_COUNT);
-    if (gap > 0.05) target *= 1.06;
-    else if (gap < -0.05) target *= 0.95;
+    // Pace correction keeps the field within a credible racing distance without
+    // teleporting anyone: trailing rivals can catch up, leaders ease off slightly.
+    const gap = playerProgress - (raceAi.gridLap[car] + relativeRaceIndex(index, raceAi.startIndex[car]) / SAMPLE_COUNT);
+    target *= 1 + MathUtils.clamp(gap * 0.55, -0.18, 0.18);
 
     const speedError = target - raceAi.speed[car];
-    raceAi.braking[car] = speedError < -0.08 ? 1 : 0;
+    raceAi.impact[car] = Math.max(0, raceAi.impact[car] - dt * 2.8);
+    raceAi.braking[car] = speedError < -0.08 || raceAi.impact[car] > 0.2 ? 1 : 0;
     raceAi.speed[car] += MathUtils.clamp(speedError, -26 * dt, skill.accel * dt);
 
     let next = index + (raceAi.speed[car] / SEGMENT_LENGTH) * dt;
-    if (next >= SAMPLE_COUNT) {
-      next -= SAMPLE_COUNT;
-      raceAi.lap[car] += 1;
-      // Finish detected once; the car keeps circulating on a cool-down lap but
-      // its race progress is frozen past the flag so the ranking stays honest.
-      if (raceAi.lap[car] > TOTAL_LAPS && !raceAi.finished[car]) {
-        raceAi.finished[car] = 1;
-        raceAi.finishTime[car] = race.totalTime;
-        raceAi.progress[car] = TOTAL_LAPS + 1.5;
+    if (next >= SAMPLE_COUNT) next -= SAMPLE_COUNT;
+    if (crossedCheckpoint(index, next, checkpointSample(0))) {
+      if (raceAi.startLinePassed[car]) {
+        raceAi.lap[car] += 1;
+        // Finish detected once; the car keeps circulating on a cool-down lap
+        // but its race progress stays frozen past the flag.
+        if (raceAi.lap[car] > TOTAL_LAPS && !raceAi.finished[car]) {
+          raceAi.finished[car] = 1;
+          raceAi.finishTime[car] = race.totalTime;
+          raceAi.progress[car] = TOTAL_LAPS + 1.5;
+        }
+      } else {
+        // The first pass over the start stripe after the standing start is not
+        // a completed lap; it merely crosses the line the grid was staged behind.
+        raceAi.startLinePassed[car] = 1;
+      }
+    }
+    if (crossedCheckpoint(index, next, Math.round(raceAi.startIndex[car]))) raceAi.gridLap[car] += 1;
+
+    // Each rival roams a different, evolving lane instead of tracing a fixed
+    // racing line. Course phase plus a slow time drift creates broad, smooth
+    // line choices while keeping the cars inside the road and away from walls.
+    raceAi.wobble[car] += dt;
+    const coursePhase = (next / SAMPLE_COUNT) * Math.PI * 2;
+    const laneChoice =
+      skill.laneCenter +
+      Math.sin(coursePhase * 2 + raceAi.wobble[car] * 0.16 + car * 1.7) * skill.laneSwing +
+      Math.sin(coursePhase * 5 - raceAi.wobble[car] * 0.11 + car * 2.4) * 0.55;
+    const line = MathUtils.clamp(laneChoice, -AI_LATERAL_LIMIT, AI_LATERAL_LIMIT);
+    const lateral = MathUtils.clamp(
+      MathUtils.damp(raceAi.lateral[car], line, 0.72, dt),
+      -AI_LATERAL_LIMIT,
+      AI_LATERAL_LIMIT,
+    );
+    placeAi(car, next, lateral);
+    if (!raceAi.finished[car]) raceAi.progress[car] = raceAi.gridLap[car] + relativeRaceIndex(next, raceAi.startIndex[car]) / SAMPLE_COUNT;
+  }
+}
+
+function overlapOnContactAxis(
+  dx: number,
+  dz: number,
+  axisX: number,
+  axisZ: number,
+  forward1X: number,
+  forward1Z: number,
+  side1X: number,
+  side1Z: number,
+  forward2X: number,
+  forward2Z: number,
+  side2X: number,
+  side2Z: number,
+) {
+  const radius =
+    COLLISION_HALF_LENGTH *
+      (Math.abs(forward1X * axisX + forward1Z * axisZ) + Math.abs(forward2X * axisX + forward2Z * axisZ)) +
+    COLLISION_HALF_WIDTH *
+      (Math.abs(side1X * axisX + side1Z * axisZ) + Math.abs(side2X * axisX + side2Z * axisZ));
+  const overlap = radius - Math.abs(dx * axisX + dz * axisZ);
+  if (overlap <= 0) return false;
+  if (overlap < CONTACT.penetration) {
+    CONTACT.penetration = overlap;
+    CONTACT.normalX = axisX;
+    CONTACT.normalZ = axisZ;
+  }
+  return true;
+}
+
+/** Oriented-box contact test in XZ; no rigid-body library or per-frame allocations. */
+function findCarContact(x1: number, z1: number, heading1: number, x2: number, z2: number, heading2: number) {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  const forward1X = -Math.sin(heading1);
+  const forward1Z = -Math.cos(heading1);
+  const side1X = -Math.cos(heading1);
+  const side1Z = Math.sin(heading1);
+  const forward2X = -Math.sin(heading2);
+  const forward2Z = -Math.cos(heading2);
+  const side2X = -Math.cos(heading2);
+  const side2Z = Math.sin(heading2);
+  CONTACT.penetration = Infinity;
+  if (!overlapOnContactAxis(dx, dz, forward1X, forward1Z, forward1X, forward1Z, side1X, side1Z, forward2X, forward2Z, side2X, side2Z)) return false;
+  if (!overlapOnContactAxis(dx, dz, side1X, side1Z, forward1X, forward1Z, side1X, side1Z, forward2X, forward2Z, side2X, side2Z)) return false;
+  if (!overlapOnContactAxis(dx, dz, forward2X, forward2Z, forward1X, forward1Z, side1X, side1Z, forward2X, forward2Z, side2X, side2Z)) return false;
+  if (!overlapOnContactAxis(dx, dz, side2X, side2Z, forward1X, forward1Z, side1X, side1Z, forward2X, forward2Z, side2X, side2Z)) return false;
+  const towardSecond = dx * CONTACT.normalX + dz * CONTACT.normalZ;
+  if (towardSecond < 0) {
+    CONTACT.normalX = -CONTACT.normalX;
+    CONTACT.normalZ = -CONTACT.normalZ;
+  } else if (Math.abs(towardSecond) < 1e-4) {
+    CONTACT.normalX = forward1X;
+    CONTACT.normalZ = forward1Z;
+  }
+  return true;
+}
+
+function applyAiImpact(car: number, normalX: number, normalZ: number, impulse: number, direction: number, strength: number) {
+  const heading = raceAi.heading[car];
+  const forwardX = -Math.sin(heading);
+  const forwardZ = -Math.cos(heading);
+  const sideX = -Math.cos(heading);
+  const sideZ = Math.sin(heading);
+  const velocityX = raceAi.speed[car] * forwardX + normalX * impulse * direction;
+  const velocityZ = raceAi.speed[car] * forwardZ + normalZ * impulse * direction;
+  const along = velocityX * forwardX + velocityZ * forwardZ;
+  const lateralKick = velocityX * sideX + velocityZ * sideZ;
+  raceAi.speed[car] = MathUtils.clamp(along, 0, AI_SKILL[car].top) * (1 - strength * 0.18);
+  raceAi.lateral[car] = MathUtils.clamp(raceAi.lateral[car] + lateralKick * 0.12, -LATERAL_LIMIT, LATERAL_LIMIT);
+  raceAi.impact[car] = Math.max(raceAi.impact[car], strength);
+  raceAi.impactSide[car] = Math.sign(lateralKick) || Math.sign(direction * (normalX * sideX + normalZ * sideZ)) || 1;
+  raceAi.braking[car] = 1;
+  placeAi(car, raceAi.indexFloat[car], raceAi.lateral[car]);
+}
+
+function resolvePlayerOpponentContacts() {
+  for (let car = 0; car < AI_COUNT; car++) {
+    const touching = findCarContact(vehicle.x, vehicle.z, vehicle.heading, raceAi.x[car], raceAi.z[car], raceAi.heading[car]);
+    if (!touching) {
+      PLAYER_AI_CONTACT_LATCH[car] = 0;
+      continue;
+    }
+
+    const normalX = CONTACT.normalX;
+    const normalZ = CONTACT.normalZ;
+    if (!PLAYER_AI_CONTACT_LATCH[car]) {
+      PLAYER_AI_CONTACT_LATCH[car] = 1;
+      const aiForwardX = -Math.sin(raceAi.heading[car]);
+      const aiForwardZ = -Math.cos(raceAi.heading[car]);
+      const aiVelocityX = raceAi.speed[car] * aiForwardX;
+      const aiVelocityZ = raceAi.speed[car] * aiForwardZ;
+      const closingSpeed = Math.max(0, -((aiVelocityX - vehicle.velX) * normalX + (aiVelocityZ - vehicle.velZ) * normalZ));
+      if (closingSpeed > 0.55) {
+        const strength = MathUtils.clamp(closingSpeed / 22, 0.12, 1);
+        const impulse = (closingSpeed * 1.08) / 1.92;
+        vehicle.velX -= normalX * impulse;
+        vehicle.velZ -= normalZ * impulse;
+        vehicle.velX *= 1 - strength * 0.16;
+        vehicle.velZ *= 1 - strength * 0.16;
+        applyAiImpact(car, normalX, normalZ, impulse, 1, strength);
+        vehicle.crashFx = Math.max(vehicle.crashFx, strength);
+        if (strength > 0.3) {
+          vehicle.nitro = 0;
+          vehicle.boostTimer = 0;
+          vehicle.boosting = false;
+        }
+        if (closingSpeed > 3.2 && vehicle.crashEventCooldown <= 0) {
+          vehicle.crashEventCooldown = 0.65;
+          emit({ type: "crash", strength, source: "vehicle" });
+        }
       }
     }
 
-    // Racing line: hold one side of the road with a slow sinusoidal weave.
-    raceAi.wobble[car] += dt;
-    const line = skill.line * 0.55 + Math.sin(raceAi.wobble[car] * 0.6) * skill.line * 0.45;
-    raceAi.lateral[car] = MathUtils.damp(raceAi.lateral[car], line, 0.8, dt);
+    // Separate the bodies over a few simulation frames instead of allowing
+    // them to interpenetrate or snapping either car to a new track sample.
+    const correction = Math.min(CONTACT.penetration + 0.025, 0.75);
+    vehicle.x -= normalX * correction * 0.52;
+    vehicle.z -= normalZ * correction * 0.52;
+    const aiSideX = -Math.cos(raceAi.heading[car]);
+    const aiSideZ = Math.sin(raceAi.heading[car]);
+    const sideCorrection = normalX * aiSideX + normalZ * aiSideZ;
+    raceAi.lateral[car] = MathUtils.clamp(raceAi.lateral[car] + sideCorrection * correction * 0.52, -LATERAL_LIMIT, LATERAL_LIMIT);
+    placeAi(car, raceAi.indexFloat[car], raceAi.lateral[car]);
+  }
+}
 
-    raceAi.indexFloat[car] = next;
-    const base = (Math.floor(next) % SAMPLE_COUNT) * 7;
-    const blend = next - Math.floor(next);
-    const tx = samples[base + 3];
-    const tz = samples[base + 5];
-    const horizontal = Math.hypot(tx, tz) || 1;
-    raceAi.x[car] = samples[base] + (tz / horizontal) * raceAi.lateral[car];
-    raceAi.z[car] = samples[base + 2] + (-tx / horizontal) * raceAi.lateral[car];
-    raceAi.y[car] = roadHeightAt(Math.floor(next), blend);
-    raceAi.heading[car] = headingAt(Math.floor(next), blend);
-    if (!raceAi.finished[car]) raceAi.progress[car] = raceAi.lap[car] - 1 + next / SAMPLE_COUNT;
+function resolveOpponentContact() {
+  if (!findCarContact(raceAi.x[0], raceAi.z[0], raceAi.heading[0], raceAi.x[1], raceAi.z[1], raceAi.heading[1])) {
+    OPPONENT_CONTACT_LATCH = 0;
+    return;
+  }
+  const normalX = CONTACT.normalX;
+  const normalZ = CONTACT.normalZ;
+  if (!OPPONENT_CONTACT_LATCH) {
+    OPPONENT_CONTACT_LATCH = 1;
+    const firstForwardX = -Math.sin(raceAi.heading[0]);
+    const firstForwardZ = -Math.cos(raceAi.heading[0]);
+    const secondForwardX = -Math.sin(raceAi.heading[1]);
+    const secondForwardZ = -Math.cos(raceAi.heading[1]);
+    const velocity1X = raceAi.speed[0] * firstForwardX;
+    const velocity1Z = raceAi.speed[0] * firstForwardZ;
+    const velocity2X = raceAi.speed[1] * secondForwardX;
+    const velocity2Z = raceAi.speed[1] * secondForwardZ;
+    const closingSpeed = Math.max(0, -((velocity2X - velocity1X) * normalX + (velocity2Z - velocity1Z) * normalZ));
+    if (closingSpeed > 0.55) {
+      const strength = MathUtils.clamp(closingSpeed / 22, 0.12, 1);
+      const impulse = (closingSpeed * 1.08) / 2;
+      applyAiImpact(0, normalX, normalZ, impulse, -1, strength);
+      applyAiImpact(1, normalX, normalZ, impulse, 1, strength);
+      if (closingSpeed > 5) emit({ type: "opponentCrash", strength });
+    }
+  }
+
+  const correction = Math.min(CONTACT.penetration * 0.52 + 0.025, 0.75);
+  for (let car = 0; car < AI_COUNT; car++) {
+    const direction = car === 0 ? -1 : 1;
+    const sideX = -Math.cos(raceAi.heading[car]);
+    const sideZ = Math.sin(raceAi.heading[car]);
+    const sideCorrection = (normalX * sideX + normalZ * sideZ) * direction;
+    raceAi.lateral[car] = MathUtils.clamp(raceAi.lateral[car] + sideCorrection * correction, -LATERAL_LIMIT, LATERAL_LIMIT);
+    placeAi(car, raceAi.indexFloat[car], raceAi.lateral[car]);
   }
 }
 
@@ -501,6 +740,7 @@ function advanceRaceProgress() {
   const index = vehicle.indexFloat < 0 ? 0 : Math.round(vehicle.indexFloat) % SAMPLE_COUNT;
   const previous = vehicle.prevIndex;
   if (index !== previous) {
+    if (crossedCheckpoint(previous, index, Math.round(race.gridStartIndex))) race.gridLap += 1;
     const expected = (race.cpPassed + 1) % CHECKPOINT_COUNT;
     if (crossedCheckpoint(previous, index, checkpointSample(expected))) {
       race.cpPassed = expected;
@@ -621,7 +861,7 @@ function integrate(h: number, locked: boolean) {
         vehicle.boosting = false;
         if (vehicle.crashEventCooldown <= 0) {
           vehicle.crashEventCooldown = 0.55;
-          emit({ type: "crash", strength });
+          emit({ type: "crash", strength, source: "barrier" });
         }
       }
     }
@@ -707,7 +947,7 @@ function syncDrive() {
   raceTelemetry.checkpoint = race.cpPassed;
   raceTelemetry.nextCheckpoint = (race.cpPassed + 1) % CHECKPOINT_COUNT;
   raceTelemetry.wrongWay = vehicle.wrongWayTimer > 0.45;
-  raceTelemetry.progress = (race.lap - 1 + vehicle.indexFloat / SAMPLE_COUNT) / TOTAL_LAPS;
+  raceTelemetry.progress = (race.gridLap + relativeRaceIndex(vehicle.indexFloat) / SAMPLE_COUNT) / TOTAL_LAPS;
   raceTelemetry.topSpeedKph = vehicle.topSpeedKph;
   raceTelemetry.averageSpeedKph = vehicle.speedSamples ? vehicle.speedTotal / vehicle.speedSamples : 0;
   raceTelemetry.phase = race.phase;
@@ -728,7 +968,7 @@ function computePosition() {
   const mine =
     race.phase === "finished"
       ? TOTAL_LAPS + 0.5
-      : race.lap - 1 + vehicle.indexFloat / SAMPLE_COUNT;
+      : race.gridLap + relativeRaceIndex(vehicle.indexFloat) / SAMPLE_COUNT;
   let ahead = 0;
   for (let car = 0; car < AI_COUNT; car++) {
     if (raceAi.progress[car] > mine) ahead += 1;
@@ -754,10 +994,10 @@ export function stepRace(rawDelta: number) {
 
   if (phase === "countdown") {
     race.countdownTimer += dt;
-    const value = Math.max(0, Math.ceil(3 - race.countdownTimer));
+    const value = Math.max(0, Math.ceil(5 - race.countdownTimer - 1e-6));
     if (value !== race.countdown) {
       race.countdown = value;
-      if (value > 0) emit({ type: "countdown", value });
+      emit({ type: "countdown", value });
     }
     race.accumulator += dt;
     let steps = 0;
@@ -767,13 +1007,13 @@ export function stepRace(rawDelta: number) {
       steps += 1;
     }
     if (steps === 6) race.accumulator = 0;
-    if (race.countdownTimer >= 3) {
+    if (race.countdownTimer >= 5 - 1e-6) {
+      // The green light holds for one full second; GO releases the cars at T-0.
       race.phase = "racing";
       race.countdown = 0;
       race.lapTime = 0;
       race.totalTime = 0;
       raceTelemetry.phase = "racing";
-      emit({ type: "countdown", value: 0 });
       emit({ type: "go" });
       emit({ type: "phase", phase: "racing" });
     }
@@ -800,7 +1040,11 @@ export function stepRace(rawDelta: number) {
 
   // Opponents only move while the lap clock is running; then syncDrive()
   // re-ranks the field so the HUD can print 1st..3rd.
-  if (phase === "racing") stepAi(dt);
+  if (phase === "racing") {
+    stepAi(dt);
+    resolvePlayerOpponentContacts();
+    resolveOpponentContact();
+  }
   syncDrive();
 }
 

@@ -210,7 +210,9 @@ export const RaceOpponents = memo(function RaceOpponents() {
         if (visible) {
           node.position.set(raceAi.x[slot], raceAi.y[slot], raceAi.z[slot]);
           // Same convention as the player's rig: local -Z is forward.
-          node.rotation.y = raceAi.heading[slot];
+          const impact = raceAi.impact[slot];
+          node.rotation.y = raceAi.heading[slot] + raceAi.impactSide[slot] * impact * 0.035;
+          node.rotation.z = raceAi.impactSide[slot] * impact * 0.075;
         }
       }
       if (!model) continue;
