@@ -6,6 +6,7 @@ import DRACO_WASM_URL from "three/examples/jsm/libs/draco/gltf/draco_decoder.was
 import DRACO_WRAPPER_JS from "three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?raw";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { clone as cloneScene } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 // Accelerated raycasting (BVH) — pointer picking over hundreds of car meshes
@@ -68,7 +69,9 @@ export function createGltfLoader() {
     dracoLoaderSingleton.preload();
   }
   const Q = new GLTFLoader();
-  return (Q.setDRACOLoader(dracoLoaderSingleton), Q);
+  Q.setDRACOLoader(dracoLoaderSingleton);
+  Q.setMeshoptDecoder(MeshoptDecoder);
+  return Q;
 }
 
 export function getBundledGlbUrl() {
@@ -149,7 +152,7 @@ export async function tryFetchGlb(Q) {
   }
 }
 
-async function loadVehicleSource(Q, A, g) {
+async function loadVehicleSource(Q, A, g, { accelerateRaycast = true } = {}) {
   let I = null,
     C = "bundled-reference",
     E = "sf90-stradale-showroom.glb (Composite Ferrari CAD + SF90 Powertrain/Aero Build)",
@@ -174,7 +177,7 @@ async function loadVehicleSource(Q, A, g) {
       r.updateMatrixWorld(!0));
     let j = 0,
       u = 0;
-    await buildRaycastAcceleration(r);
+    if (accelerateRaycast) await buildRaycastAcceleration(r);
     return (
       r.traverse((K) => {
         if (K.isMesh) {
@@ -251,7 +254,7 @@ async function loadVehicleSource(Q, A, g) {
   }
   let l = 0,
     M = 0;
-  await buildRaycastAcceleration(o.scene);
+  if (accelerateRaycast) await buildRaycastAcceleration(o.scene);
   return (
     o.scene.traverse((n) => {
       if (n.isMesh) {
@@ -276,15 +279,15 @@ const bundledAssets = new Map();
 
 // Decode each bundled car once. Cloned scene nodes keep mutable materials and
 // transforms private, while the expensive geometry, textures, and BVHs are shared.
-export async function loadVehicleAsset(upload, url, car) {
+export async function loadVehicleAsset(upload, url, car, options = {}) {
   let asset;
   if (upload || url) {
-    asset = await loadVehicleSource(upload, url, car);
+    asset = await loadVehicleSource(upload, url, car, options);
   } else {
     const queryModel = new URLSearchParams(window.location.search).get("model") || "";
     const key = `${car?.id || "sf90"}:${queryModel}`;
     if (!bundledAssets.has(key)) {
-      const pending = loadVehicleSource(null, null, car).catch((error) => {
+      const pending = loadVehicleSource(null, null, car, options).catch((error) => {
         bundledAssets.delete(key);
         throw error;
       });

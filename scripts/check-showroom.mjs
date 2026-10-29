@@ -72,6 +72,24 @@ const raceSessionModule = loadModule("src/three/raceSession.ts");
 const raceTrackModule = loadModule("src/three/raceTrack.ts", { "./raceSession": raceSessionModule });
 const raceEngineModule = loadModule("src/three/raceEngine.ts", { "./raceTrack": raceTrackModule });
 const cityLayoutModule = loadModule("src/three/cityLayout.ts");
+assert(cityLayoutModule.CITY_BUILDINGS.length >= 45, "The open city should have a dense, varied block layout");
+assert(cityLayoutModule.CITY_SKYLINE.length >= 20, "The city should frame its routes with a distant harbour skyline");
+assert(cityLayoutModule.CITY_WINDOWS.length + cityLayoutModule.CITY_WINDOWS_WARM.length >= 8000, "Building facades should have instanced window detail");
+assert(cityLayoutModule.CITY_TREE_CANOPIES.length >= cityLayoutModule.CITY_TREE_TRUNKS.length * 2, "Street trees should use layered canopies rather than single low-detail blobs");
+assert(cityLayoutModule.CITY_PARKS.length >= 10 && cityLayoutModule.CITY_HILLS.length >= 10, "The city should include landscaped pocket parks and natural hills");
+for (const road of cityLayoutModule.CITY_ROADS) {
+  for (let segment = 0; segment < road.points.length - 1; segment++) {
+    const a = road.points[segment];
+    const b = road.points[segment + 1];
+    const steps = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z));
+    for (let step = 0; step <= steps; step++) {
+      const t = step / steps;
+      const x = a.x + (b.x - a.x) * t;
+      const z = a.z + (b.z - a.z) * t;
+      assert.equal(cityLayoutModule.isCityBuildingAt(x, z), false, `Buildings must not intrude on the ${road.id} driving centerline`);
+    }
+  }
+}
 const cityDriveModule = loadModule("src/three/cityDrive.ts", { "./raceEngine": raceEngineModule, "./cityLayout": cityLayoutModule });
 const cityDriveSource = fs.readFileSync("src/three/cityDrive.ts", "utf8");
 const cityHudSource = fs.readFileSync("src/components/CityHud.tsx", "utf8");
@@ -93,9 +111,45 @@ assert.match(cityWorldSource, /City_Ground[\s\S]*planeGeometry args=\{\[470, CIT
 assert.match(cityWorldSource, /new MeshStandardMaterial\(\{[^}]*fog \}\)/, "City instances must not inherit the garage's dark fog");
 assert.match(cityWorldSource, /position=\{\[-42, 72, -48\]\}/, "Daylight must illuminate the city-facing building fronts");
 assert.match(cityWorldSource, /const outside = driving && cityDrive\.z > 19/, "City lighting must wait until the camera has cleared the garage doorway");
+const mainMenuSource = fs.readFileSync("src/components/MainMenu.tsx", "utf8");
+assert.match(appSource, /const \[mainMenuOpen, setMainMenuOpen\] = React\.useState\(true\)/, "The game should open on its main menu");
+assert.match(appSource, /!mainMenuOpen && \(startGameLoading \|\| \(o && !I\)\)/, "The loading screen must stay hidden until Start Game is pressed");
+assert.match(appSource, /\{gameStarted && \([\s\S]*?<Canvas/, "The showroom scene must not mount until Start Game is pressed");
+assert.match(appSource, /const startGame = React\.useCallback\(\(\) => \{[\s\S]*setStartGameLoading\(true\)[\s\S]*l\(true\)[\s\S]*setGameStarted\(true\)[\s\S]*setMainMenuOpen\(false\)/, "Every Start Game action must begin a loading screen before revealing the showroom");
+const loadingScreenSource = fs.readFileSync("src/components/LoadingScreen.tsx", "utf8");
+assert.match(loadingScreenSource, /useState\(1\)/, "The loading counter must begin at one percent");
+assert.match(loadingScreenSource, /LOADING_DURATION_MS = 1800[\s\S]*Math\.min\(100, 1 \+ Math\.floor/, "The loading counter must animate upward and stop at one hundred percent");
+assert.match(loadingScreenSource, /Loading \{progress\}%/, "The loading screen must show the live percentage");
+assert.match(loadingScreenSource, /if \(!assetReady \|\| progress < 100\) return/, "The loading screen must remain until both assets and 100 percent are ready");
+assert.match(appSource, /<MainMenu[\s\S]*onStart=\{startGame\}[\s\S]*onQuit=\{quitGame\}/, "The menu must connect its Start Game and Quit Game actions to the app");
+const homeMenuSource = mainMenuSource.slice(mainMenuSource.indexOf('{screen === "home"'), mainMenuSource.indexOf('{screen === "settings"'));
+assert.match(homeMenuSource, /onClick=\{beginGame\}[\s\S]*Start Game[\s\S]*Settings[\s\S]*Quit Game/, "The main menu must offer only Start Game, Settings and Quit Game");
+assert.doesNotMatch(homeMenuSource, /Current session|Selected vehicle|Quick controls|LOADING|Initializing/, "The main menu must not include loading or garage HUD content");
+assert.match(mainMenuSource, /label: "Performance"[\s\S]*label: "Balanced"[\s\S]*label: "High fidelity"/, "Settings must provide performance, balanced and high-fidelity graphics presets");
+assert.match(mainMenuSource, /Garage music[\s\S]*Garage lighting[\s\S]*Auto-orbit camera[\s\S]*Controls/, "Settings must expose practical audio, lighting, camera and control options");
+assert.match(appSource, /cA\.key === "Escape"[\s\S]*setPauseMenuOpen\(true\)/, "Escape in the garage must open the pause menu");
+assert.match(appSource, /!pauseMenuOpen && !pendingCar && \([\s\S]*MainMenu/, "The pause menu and car confirmation must hide garage HUD controls while open");
+assert.match(appSource, /mode="pause"[\s\S]*onResume=\{resumeGame\}[\s\S]*onQuitToTitle=\{quitToMainMenu\}/, "The garage pause menu must support resume and quit-to-title actions");
+assert.match(mainMenuSource, /if \(mode === "pause"\) onResume\?\.\(\)[\s\S]*mode === "pause" \? "Resume Game" : "Start Game"/, "The pause menu's primary action must resume the showroom");
+assert.match(appSource, /shadows=\{!raceMode && graphicsQuality !== "low"\}[\s\S]*dpr=\{raceMode \? 1 : graphicsQuality === "low"/, "Race rendering must use native pixel density and skip the expensive shadow map for stability");
 assert.match(showroomSource, /lightsOn=\{garageLightsOn \|\| cityDriveMode\}/, "Garage lights must not dim global environment lighting while city driving is visible");
 assert.match(showroomSource, /cityDriveMode \? 0\.36 : garageLightsOn \? 0\.52 : 0\.18/, "Garage light toggles must not darken the open city");
-assert.match(cityDriveSource, /topSpeedKph: 340[\s\S]*zeroTo100Kph: 2\.5[\s\S]*gearRedlineKph: \[[^\]]{20,}\]/, "SF90 city performance must use its model-specific acceleration, top speed and 8-speed gearing");
+const garageCarDisplaysSource = fs.readFileSync("src/three/GarageCarDisplays.tsx", "utf8");
+assert.match(appSource, /<GarageCarDisplays activeCarId=\{Q\} onSelectCar=\{SA\}/, "Other bundled supercars should be staged in the garage and selectable");
+assert.match(garageCarDisplaysSource, /await loadVehicleAsset\([\s\S]*?car,/, "Garage display and race models should use the shared bundled-asset cache");
+assert.match(garageCarDisplaysSource, /requestIdleCallback[\s\S]*idleId = window\.requestIdleCallback\(loadNext/, "Display-car assets should be scheduled during browser idle time");
+assert.match(garageCarDisplaysSource, /if \(!cancelled && index < CARS\.length\) scheduleNext/, "Garage display assets must warm sequentially to avoid competing decode hitches");
+assert.match(garageCarDisplaysSource, /CARS\.filter\(\(car\) => car\.id !== activeCarId && assets\[car\.id\]\)/, "The garage displays the other cars without duplicating the selected elevator car");
+const carSwitchRequest = appSource.match(/SA = React\.useCallback\(([\s\S]*?)\n\s*\),\n\s*confirmCarSwitch/);
+assert(carSwitchRequest, "Clicking a different displayed car must stage a selection request");
+assert.match(carSwitchRequest[1], /setPendingCarId\(x\)/, "A clicked car must await confirmation before selection");
+assert.doesNotMatch(carSwitchRequest[1], /\bA\(x\)/, "A click must not immediately change the selected car");
+assert.match(appSource, /confirmCarSwitch = React\.useCallback\(\(\) => \{[\s\S]*A\(nextCarId\)[\s\S]*P\(null\)[\s\S]*j\(null\)[\s\S]*W\(false\)/, "Confirming a car switch must preserve the existing selection-reset behavior");
+assert.match(appSource, /role="alertdialog"[\s\S]*aria-labelledby="switch-car-title"[\s\S]*Switch from[\s\S]*pendingCar\.shortTitle[\s\S]*>\s*No\s*<[\s\S]*onClick=\{confirmCarSwitch\}[\s\S]*>\s*Yes\s*</, "Car switching must show an accessible Yes/No confirmation with the current and requested cars");
+assert.match(appSource, /onClick=\{\(\) => setPendingCarId\(null\)\}[\s\S]*>\s*No\s*</, "No must cancel without changing the selected car");
+assert.match(appSource, /!pauseMenuOpen && !pendingCar && \(/, "The garage HUD must be hidden while the car confirmation is open");
+assert.match(appSource, /style=\{\{ zIndex: 2147483000, isolation: "isolate" \}\}/, "The car confirmation must be layered above every garage control");
+assert.match(cityDriveSource,  /topSpeedKph: 340[\s\S]*zeroTo100Kph: 2\.5[\s\S]*gearRedlineKph: \[[^\]]{20,}\]/, "SF90 city performance must use its model-specific acceleration, top speed and 8-speed gearing");
 assert.match(cityDriveSource, /topSpeedKph: 350[\s\S]*zeroTo100Kph: 2\.9[\s\S]*gearRedlineKph: \[[^\]]+\]/, "Aventador city performance must use its model-specific acceleration, top speed and 7-speed gearing");
 assert.match(cityHudSource, /shiftCityGear\(-1\)[\s\S]*shiftCityGear\(1\)[\s\S]*Drive controls[\s\S]*Downshift[\s\S]*Upshift/, "City HUD must provide manual paddle controls and a visible keyboard legend");
 assert.match(cityDirectorSource, /KeyQ[\s\S]*shiftCityGear\(-1\)[\s\S]*KeyE[\s\S]*shiftCityGear\(1\)/, "City driving must support keyboard paddle shifts");
@@ -286,6 +340,9 @@ assert(raceTrackModule.selectRaceTrack("alpine"), "Alpine race map must be selec
 assert.equal(raceSessionModule.raceSession.mapId, "alpine");
 assert(raceTrackModule.selectRaceTrack("maranello"), "The default race map must remain selectable");
 const raceDirectorSource = fs.readFileSync("src/three/RaceDirector.tsx", "utf8");
+assert.match(raceDirectorSource, /RACE_FRAME_INTERVAL = 1000 \/ 40[\s\S]*setTimeout\(\(\) => \{[\s\S]*state\.invalidate\(\)/, "Demand rendering must cap race updates to 40 fps rather than saturating the browser main thread");
+const raceSceneReadySource = raceDirectorSource.slice(raceDirectorSource.indexOf("export const RaceSceneReady"), raceDirectorSource.indexOf("export const RaceVehicleRig"));
+assert.match(raceSceneReadySource, /}, 0\);/, "RaceSceneReady must not take over R3F's render loop and leave a stale garage frame on screen");
 const raceEngineSource = fs.readFileSync("src/three/raceEngine.ts", "utf8");
 const raceHudSource = fs.readFileSync("src/components/RaceHud.tsx", "utf8");
 assert.match(raceDirectorSource, /case "ShiftLeft":[\s\S]*?held\.drift = true/, "Shift must engage the drift handbrake");
@@ -295,6 +352,7 @@ assert.match(raceHudSource, /bottom-20 left-3 sm:bottom-24/, "The turbo display 
 assert.match(raceHudSource, /scaleY\(\$\{t\.nitro\.toFixed\(3\)\}\)/, "Turbo charge must fill a vertical meter");
 assert.match(raceHudSource, /function buildRaceMinimap[\s\S]*?path \+= "Z"/, "The race HUD must draw a closed circuit map from the selected route");
 assert.match(raceHudSource, /minimapPlayerRef[\s\S]*?minimapOpponentRefs/, "The minimap must show live player and opponent positions");
+assert.match(raceHudSource, /now - lastUpdate < 1000 \/ 30/, "Race HUD DOM updates should be capped at 30 Hz to reduce main-thread pressure");
 assert.doesNotMatch(raceHudSource, /Weather ·|ENVIRONMENTS|setEnvironment|race-recover|Recover car/, "The in-race HUD must not show weather or recovery controls");
 assert.match(raceHudSource, /onToggleLights[\s\S]*?aria-pressed=\{lightsOn\}/, "The race HUD must expose an accessible manual headlight switch");
 assert.match(raceHudSource, /onToggleBodyGlow[\s\S]*?aria-pressed=\{bodyGlowOn\}/, "The race HUD must expose a separate body-glow switch");
@@ -308,7 +366,37 @@ assert.match(vehicleSource, /light\.visible = true;[\s\S]*light\.intensity =/, "
 assert.match(vehicleSource, /interiorEnabled[\s\S]*CABIN_AMBIENCE_INTENSITY/, "Garage ambience must still power the cabin lights");
 assert.match(appSource, /interiorLightsOn=\{!raceMode && !cityMode && neonLightsOn\}/, "Cabin ambience must remain in the garage and stay off in races");
 assert.doesNotMatch(vehicleSource, /pooledLightsEnabled/, "Do not suppress the original pooled lights during races");
-assert.match(fs.readFileSync("src/three/RaceOpponents.tsx", "utf8"), /raceSession\.carLightsOn/, "AI headlights and taillights must follow the race light setting");
+const raceOpponentsSource = fs.readFileSync("src/three/RaceOpponents.tsx", "utf8");
+assert.match(raceOpponentsSource, /raceSession\.carLightsOn/, "AI headlights and taillights must follow the race light setting");
+assert.match(raceOpponentsSource, /RACE_OPPONENT_CARS\.slice\(0, AI_COUNT\)/, "Race mode must load the dedicated Porsche and Bugatti opponent models");
+assert.match(raceOpponentsSource, /loadVehicleAsset\(null, null, car, \{ accelerateRaycast: false \}\)/, "Non-interactive race models must skip unnecessary raycast BVH work");
+assert.match(raceOpponentsSource, /930_lights[\s\S]*headlight_emit[\s\S]*taillight_emit/, "Opponent lights must use the models' actual headlamp and rear lamp geometry");
+assert.match(raceOpponentsSource, /raceAi\.braking\[slot\][\s\S]*tailIntensity = braking \? 5\.8/, "AI rear emitters must brighten only when that opponent brakes");
+assert.match(raceOpponentsSource, /raceSession\.carLightsOn[\s\S]*material\.emissiveIntensity = headlightsOn \? 3\.2 : 0/, "Night and Rain/Fog should visibly switch on the opponent headlamp emitters");
+assert.match(raceOpponentsSource, /function makeOpponentHeadlightRig[\s\S]*target\.position\.set[\s\S]*spot\.target = target[\s\S]*rig\.add\(target, spot\)/, "Opponent headlights must project real spot beams from scene-attached targets");
+assert.match(raceOpponentsSource, /beam\.intensity = headlightsOn \? HEADLIGHT_LOW_BEAM : 0[\s\S]*headlightRig/, "Opponent spot beams and emitters must switch together with race lights");
+assert.match(appSource, /<RaceOpponents \/>[\s\S]*<RaceSceneReady onReady=\{onRaceSceneReady\} \/>/, "The race must wait for the mounted scene to warm before dismissing the loading screen");
+assert.match(appSource, /setRaceLoading\(true\)[\s\S]*setRaceMode\(true\)/, "Start Race must show a loading overlay before mounting the circuit");
+assert.match(appSource, /\{raceLoading && <RaceLoadingScreen sceneReady=\{raceSceneReady\} onComplete=\{onRaceLoadingComplete\} \/>\}/, "A visible loading screen must cover the first expensive race frames until ready and complete");
+const raceLoadingScreenSource = fs.readFileSync("src/components/RaceLoadingScreen.tsx", "utf8");
+assert.match(raceLoadingScreenSource, /useState\(1\)[\s\S]*next = 1 \+ Math\.floor[\s\S]*next = 92 \+ Math\.floor\(finish \* 8\)[\s\S]*setProgress/, "Race loading must animate the percentage from 1 through 100");
+assert.match(raceLoadingScreenSource, /backgroundImage: `linear-gradient[\s\S]*RACE_LOADING_IMAGE[\s\S]*backgroundSize: "cover"/, "Race loading must use a full-screen race image background");
+assert.match(raceLoadingScreenSource, /aria-valuemin=\{1\}[\s\S]*aria-valuemax=\{100\}[\s\S]*aria-valuenow=\{progress\}/, "The animated loading bar must expose accessible 1-to-100 progress");
+assert.match(raceDirectorSource, /export const RaceSceneReady[\s\S]*setTimeout\(onReady, 900\)/, "The loading screen must remain until the race scene has had time to render and warm");
+const raceOpponentCarsSource = fs.readFileSync("src/data/raceOpponentCars.ts", "utf8");
+assert.match(raceOpponentCarsSource, /id: "porsche-911-turbo-930"[\s\S]*id: "bugatti-chiron"/, "Both requested supercar models must be in the race-only opponent roster");
+assert.match(appSource, /warmRaceCircuit\(raceSetupMap\)[\s\S]*await opponentAssets[\s\S]*setRaceSetupReady\(true\)[\s\S]*requestIdleCallback/, "Race geometry and opponent models must prepare before the Start Race button is enabled");
+assert.match(appSource, /disabled=\{!raceSetupReady \|\| o \|\| !I/, "Start Race must wait for track and car preloading to finish");
+assert.match(fs.readFileSync("src/three/RaceCircuit.tsx", "utf8"), /export function warmRaceCircuit[\s\S]*circuitData\(\)[\s\S]*selectRaceTrack\(previousMapId\)/, "Race track geometry must be cached while the setup screen is open");
+assert.match(raceEngineSource, /braking: new Uint8Array\(AI_COUNT\)[\s\S]*raceAi\.braking\[car\] = speedError < -0\.08/, "AI braking telemetry must drive opponent brake lights without React state");
+for (const model of ["porsche-911-turbo-1975.glb", "bugatti-chiron.glb"]) {
+  const bytes = fs.readFileSync(`public/models/race/${model}`);
+  assert.equal(bytes.toString("ascii", 0, 4), "glTF", `${model} must be a valid bundled GLB`);
+  assert(bytes.byteLength < 4_000_000, `${model} must remain compact for race loading`);
+}
+assert.match(fs.readFileSync("src/lib/gltf.ts", "utf8"), /setMeshoptDecoder\(MeshoptDecoder\)/, "The shared GLTF loader must decode the optimized Porsche meshopt model");
+assert.match(raceOpponentsSource, /node\.matrixAutoUpdate = false[\s\S]*node\.castShadow = false[\s\S]*node\.receiveShadow = false[\s\S]*node\.raycast = \(\) => null/, "Static AI models must skip per-part transforms, shadow passes and picking for race performance");
+assert.doesNotMatch(raceOpponentsSource, /scale=\{\[1\.9, 0\.5, 4\.3\]\}/, "Race opponents must no longer use blocky box-car bodies");
 assert.doesNotMatch(raceDirectorSource, /cycleEnvironment|recoverVehicle|KeyE|KeyR/, "Weather cycling and recovery shortcuts must be disabled during a race");
 assert.doesNotMatch(raceEngineSource, /export function recoverVehicle/, "The race engine must not expose a recovery action");
 assert.match(raceHudSource, /event\.type === "crash"[\s\S]*?triggerCrashImpact/, "Barrier crashes must produce an impact response");

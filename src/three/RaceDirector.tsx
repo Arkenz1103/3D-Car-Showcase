@@ -27,6 +27,7 @@ import { triggerTurboBurst, updateAudio } from "./raceAudio";
 
 /** Camera framing constants — one place to tune the whole race feel. */
 const CAM = { base: 8.5, height: 2.7, look: 10.5, fov: 62, follow: 8.4 };
+const RACE_FRAME_INTERVAL = 1000 / 40;
 
 /**
  * Per camera mount: eye offset along forward / up / left, the look-ahead
@@ -67,6 +68,22 @@ function releaseKeys() {
  * <RaceDirector/> so the car element can stay mounted (and its GLB / shader
  * warm-up cache stay warm) while the showroom and race modes swap around it.
  */
+export const RaceSceneReady = memo(function RaceSceneReady({ onReady }: { onReady: () => void }) {
+  const firstFrame = useRef(false);
+  const timer = useRef<number | null>(null);
+  useFrame(() => {
+    if (firstFrame.current) return;
+    firstFrame.current = true;
+    // Let the circuit complete several frames of texture upload and shader
+    // warm-up behind the loading card before revealing the race HUD.
+    timer.current = window.setTimeout(onReady, 900);
+  }, 0);
+  useLayoutEffect(() => () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+  }, []);
+  return null;
+});
+
 export const RaceVehicleRig = memo(function RaceVehicleRig({ children }: { children: React.ReactNode }) {
   const group = useRef<any>(null);
   useLayoutEffect(() => {
@@ -302,6 +319,7 @@ export const RaceDirector = memo(function RaceDirector() {
   const invalidate = useThree((state) => state.invalidate);
   const clock = useRef(0);
   const settled = useRef(false);
+  const frameGate = useRef({ last: 0, timer: 0 });
   /** Last camera mount applied — latches the near-plane write to the switch. */
   const camView = useRef(-1);
 
@@ -313,10 +331,15 @@ export const RaceDirector = memo(function RaceDirector() {
     settled.current = false;
     camView.current = -1;
     clock.current = 0;
+    frameGate.current.last = 0;
+    if (frameGate.current.timer) window.clearTimeout(frameGate.current.timer);
+    frameGate.current.timer = 0;
     releaseKeys();
     startRaceSequence();
     invalidate();
     return () => {
+      if (frameGate.current.timer) window.clearTimeout(frameGate.current.timer);
+      frameGate.current.timer = 0;
       // Unmounting IS leaving the circuit: park the simulation so the rig
       // releases the car and the HUD's next mount starts from a clean grid slot.
       releaseKeys();
@@ -513,8 +536,18 @@ export const RaceDirector = memo(function RaceDirector() {
       camera.updateProjectionMatrix();
     }
 
-    markShadowsDirty();
-    state.invalidate();
+    const now = performance.now();
+    const elapsed = now - frameGate.current.last;
+    if (elapsed >= RACE_FRAME_INTERVAL) {
+      frameGate.current.last = now;
+      state.invalidate();
+    } else if (!frameGate.current.timer) {
+      frameGate.current.timer = window.setTimeout(() => {
+        frameGate.current.timer = 0;
+        frameGate.current.last = performance.now();
+        state.invalidate();
+      }, RACE_FRAME_INTERVAL - elapsed);
+    }
   }, -6);
 
   return null;

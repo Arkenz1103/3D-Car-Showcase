@@ -177,6 +177,7 @@ export const raceAi = {
   z: new Float32Array(AI_COUNT),
   heading: new Float32Array(AI_COUNT),
   speed: new Float32Array(AI_COUNT),
+  braking: new Uint8Array(AI_COUNT),
   indexFloat: new Float32Array(AI_COUNT),
   lap: new Float32Array(AI_COUNT),
   lateral: new Float32Array(AI_COUNT),
@@ -388,6 +389,7 @@ function resetAi() {
     const front = car === 0;
     placeAi(car, front ? 0 : SAMPLE_COUNT - 6, front ? 2.2 : -2.2);
     raceAi.speed[car] = 0;
+    raceAi.braking[car] = 0;
     raceAi.lap[car] = 1;
     raceAi.progress[car] = 0;
     raceAi.finishTime[car] = 0;
@@ -420,7 +422,9 @@ function stepAi(dt: number) {
     if (gap > 0.05) target *= 1.06;
     else if (gap < -0.05) target *= 0.95;
 
-    raceAi.speed[car] += MathUtils.clamp(target - raceAi.speed[car], -26 * dt, skill.accel * dt);
+    const speedError = target - raceAi.speed[car];
+    raceAi.braking[car] = speedError < -0.08 ? 1 : 0;
+    raceAi.speed[car] += MathUtils.clamp(speedError, -26 * dt, skill.accel * dt);
 
     let next = index + (raceAi.speed[car] / SEGMENT_LENGTH) * dt;
     if (next >= SAMPLE_COUNT) {

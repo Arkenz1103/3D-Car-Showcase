@@ -7,7 +7,17 @@ import {
   CITY_BRIDGE_PIERS,
   CITY_BRIDGE_RAILS,
   CITY_BUILDINGS,
+  CITY_BUILDING_CROWNS,
+  CITY_BUILDING_PODIUMS,
+  CITY_FIRE_ESCAPES,
   CITY_HILLS,
+  CITY_NEON_CYAN,
+  CITY_NEON_WARM,
+  CITY_PARKS,
+  CITY_ROOF_TANKS,
+  CITY_ROOF_UNITS,
+  CITY_SIDEWALKS,
+  CITY_SKYLINE,
   CITY_JUNCTIONS,
   CITY_LAMPS,
   CITY_MARKINGS,
@@ -17,6 +27,7 @@ import {
   CITY_TREE_CANOPIES,
   CITY_TREE_TRUNKS,
   CITY_WINDOWS,
+  CITY_WINDOWS_WARM,
   CITY_END_Z,
   CITY_START_Z,
 } from "./cityLayout";
@@ -95,7 +106,7 @@ function InstanceField({ items, geometryType = "box", materialColor = "#ffffff",
   const mesh = useRef(null);
   const geometry = useMemo(() => {
     if (geometryType === "cylinder") return new CylinderGeometry(0.5, 0.5, 1, 8);
-    if (geometryType === "sphere") return new SphereGeometry(1, 10, 8);
+    if (geometryType === "sphere") return new SphereGeometry(1, 14, 10);
     if (geometryType === "cone") return new ConeGeometry(1, 1, 7, 2);
     return new BoxGeometry(1, 1, 1);
   }, [geometryType]);
@@ -237,14 +248,25 @@ export function OpenCityWorld({ visible = true, driving = false, onReady = null 
 
       {/* Broad asphalt junctions make turns comfortable at every city crossing. */}
       <InstanceField items={CITY_JUNCTIONS} geometryType="cylinder" materialColor="#303538" roughness={0.92} />
-      <InstanceField items={CITY_BUILDINGS} materialColor="#ffffff" roughness={0.86} metalness={0.08} />
-      <InstanceField items={CITY_WINDOWS} materialColor="#ffffff" roughness={0.35} metalness={0.22} emissive="#79b8df" emissiveIntensity={0.23} />
+      <InstanceField items={CITY_SIDEWALKS} materialColor="#ffffff" roughness={0.93} />
+      <InstanceField items={CITY_PARKS} materialColor="#ffffff" roughness={1} />
+      <InstanceField items={CITY_SKYLINE} materialColor="#ffffff" roughness={0.78} metalness={0.12} />
+      <InstanceField items={CITY_BUILDING_PODIUMS} materialColor="#ffffff" roughness={0.84} metalness={0.08} />
+      <InstanceField items={CITY_BUILDINGS} materialColor="#ffffff" roughness={0.74} metalness={0.16} />
+      <InstanceField items={CITY_BUILDING_CROWNS} materialColor="#ffffff" roughness={0.68} metalness={0.2} />
+      <InstanceField items={CITY_WINDOWS} materialColor="#ffffff" roughness={0.3} metalness={0.28} emissive="#79b8df" emissiveIntensity={0.2} />
+      <InstanceField items={CITY_WINDOWS_WARM} materialColor="#fff0d0" roughness={0.32} emissive="#f5b96d" emissiveIntensity={0.25} />
+      <InstanceField items={CITY_FIRE_ESCAPES} materialColor="#ffffff" roughness={0.62} metalness={0.72} />
+      <InstanceField items={CITY_ROOF_UNITS} materialColor="#ffffff" roughness={0.72} metalness={0.42} />
+      <InstanceField items={CITY_ROOF_TANKS} geometryType="cylinder" materialColor="#ffffff" roughness={0.86} />
+      <InstanceField items={CITY_NEON_CYAN} materialColor="#ffffff" roughness={0.3} metalness={0.2} emissive="#39e6e5" emissiveIntensity={0.9} />
+      <InstanceField items={CITY_NEON_WARM} materialColor="#ffffff" roughness={0.3} metalness={0.16} emissive="#ff4268" emissiveIntensity={0.85} />
       <InstanceField items={CITY_MARKINGS} materialColor="#ffffff" roughness={0.8} />
       <InstanceField items={zebra} materialColor="#ffffff" roughness={0.8} />
       <InstanceField items={CITY_LAMPS} materialColor="#ffffff" roughness={0.45} metalness={0.72} />
       <InstanceField items={CITY_TREE_TRUNKS} geometryType="cylinder" materialColor="#ffffff" roughness={1} />
       <InstanceField items={CITY_TREE_CANOPIES} geometryType="sphere" materialColor="#ffffff" roughness={1} />
-      <InstanceField items={CITY_HILLS} geometryType="cone" materialColor="#ffffff" roughness={1} />
+      <InstanceField items={CITY_HILLS} geometryType="sphere" materialColor="#ffffff" roughness={1} />
       <InstanceField items={CITY_BRIDGE_PIERS} materialColor="#ffffff" roughness={0.86} />
       <InstanceField items={CITY_BRIDGE_RAILS} materialColor="#ffffff" roughness={0.52} metalness={0.56} />
       <InstanceField items={CITY_PALM_TRUNKS} geometryType="cylinder" materialColor="#ffffff" roughness={1} />
