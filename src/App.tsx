@@ -17,14 +17,19 @@ import { ENVIRONMENTS, RACE_MAPS, lockRaceConditions, raceSession, setEnvironmen
 import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
 import { CityHud } from "@/components/CityHud";
+import { MainMenu } from "@/components/MainMenu";
+import { LoadingScreen } from "@/components/LoadingScreen";
+import { RaceLoadingScreen } from "@/components/RaceLoadingScreen";
+import { warmRaceOpponentModels } from "@/data/raceOpponentCars";
 import { CityDriveDirector } from "@/three/CityDriveDirector";
+import { GarageCarDisplays } from "@/three/GarageCarDisplays";
 import { OpenCityWorld } from "@/three/CityWorld";
 import { stopCityDrive } from "@/three/cityDrive";
 import { LiftDirector } from "@/three/LiftDirector";
-import { RaceCircuit } from "@/three/RaceCircuit";
+import { RaceCircuit, warmRaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
 import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, startGarageTheme, stopGarageTheme, unlockAudioFromGesture } from "@/three/raceAudio";
-import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
+import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSceneReady, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
 import { liftTimeline } from "@/three/liftTimeline";
@@ -121,6 +126,8 @@ export function App() {
     [tA, eg] = React.useState("garage"),
     [zg, $] = React.useState(!1),
     [raceMode, setRaceMode] = React.useState(!1),
+    [raceLoading, setRaceLoading] = React.useState(false),
+    [raceSceneReady, setRaceSceneReady] = React.useState(false),
     [cityMode, setCityMode] = React.useState(false),
     [cityExteriorVisible, setCityExteriorVisible] = React.useState(false),
     [cityPreparing, setCityPreparing] = React.useState(false),
@@ -134,20 +141,34 @@ export function App() {
     [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
     [raceSetupMap, setRaceSetupMap] = React.useState(raceSession.mapId),
     [raceSetupEnvironment, setRaceSetupEnvironment] = React.useState(raceSession.envIndex),
+    [raceSetupReady, setRaceSetupReady] = React.useState(false),
     [garageGateOpen, setGarageGateOpen] = React.useState(false),
     [openingGate, setOpeningGate] = React.useState(false),
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
     [neonLightsOn, setNeonLightsOn] = React.useState(false),
     [garageMusicOn, setGarageMusicOn] = React.useState(true);
   const [liftStartRequested, setLiftStartRequested] = React.useState(false);
+  const [mainMenuOpen, setMainMenuOpen] = React.useState(true);
+  const [pauseMenuOpen, setPauseMenuOpen] = React.useState(false);
+  const [pendingCarId, setPendingCarId] = React.useState(null);
+  const [gameStarted, setGameStarted] = React.useState(false);
+  const [startGameLoading, setStartGameLoading] = React.useState(false);
+  const [graphicsQuality, setGraphicsQuality] = React.useState(() => {
+    try {
+      const saved = window.localStorage.getItem("maranello-graphics-quality");
+      return saved === "low" || saved === "high" ? saved : "standard";
+    } catch {
+      return "standard";
+    }
+  });
   const requestSequence = React.useRef(0);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
   const raceBodyGlowRef = React.useRef(false);
   const garageMusicRef = React.useRef(garageMusicOn);
-  const garageModeRef = React.useRef(!raceMode && !cityMode);
+  const garageModeRef = React.useRef(gameStarted && !raceMode && !cityMode);
   garageMusicRef.current = garageMusicOn;
-  garageModeRef.current = !raceMode && !cityMode;
+  garageModeRef.current = gameStarted && !raceMode && !cityMode;
   React.useEffect(
     () => () => {
       if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
@@ -171,10 +192,17 @@ export function App() {
     };
   }, []);
   React.useEffect(() => {
-    if (garageMusicOn && !raceMode && !cityMode) startGarageTheme();
+    if (gameStarted && garageMusicOn && !raceMode && !cityMode) startGarageTheme();
     else stopGarageTheme();
     return () => stopGarageTheme();
-  }, [garageMusicOn, raceMode, cityMode]);
+  }, [gameStarted, garageMusicOn, raceMode, cityMode]);
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem("maranello-graphics-quality", graphicsQuality);
+    } catch {
+      // Quality selection still works for this session when storage is blocked.
+    }
+  }, [graphicsQuality]);
   const commitAsset = React.useCallback((asset, car) => {
     setLiftStartRequested(false);
     setDriveReady(false);
@@ -195,6 +223,7 @@ export function App() {
   }, []);
 
   React.useEffect(() => {
+    if (!gameStarted) return;
     const request = ++requestSequence.current;
     const car = getCarById(Q);
     l(true);
@@ -211,20 +240,29 @@ export function App() {
     return () => {
       if (request === requestSequence.current) requestSequence.current++;
     };
-  }, [Q, commitAsset]);
+  }, [Q, commitAsset, gameStarted]);
   const T = React.useMemo(() => (V ? getComponentSpec(g, V) : null), [V, g]),
     YA = React.useMemo(() => (y ? getComponentSpec(g, y.componentId) : null), [y, g]),
     SA = React.useCallback(
       (x) => {
         if (x === Q) return;
-        liftTimeline.pauseShowcase();
-        A(x);
-        P(null);
-        j(null);
-        W(false);
+        setPendingCarId(x);
       },
       [Q],
-    );
+    ),
+    confirmCarSwitch = React.useCallback(() => {
+      if (!pendingCarId || pendingCarId === Q) {
+        setPendingCarId(null);
+        return;
+      }
+      const nextCarId = pendingCarId;
+      setPendingCarId(null);
+      liftTimeline.pauseShowcase();
+      A(nextCarId);
+      P(null);
+      j(null);
+      W(false);
+    }, [pendingCarId, Q, A]);
   React.useEffect(() => {
     window.innerWidth >= 1180 && mg(!0);
   }, []);
@@ -348,8 +386,36 @@ export function App() {
     if (!I || o || openingGate || cityMode || cityPreparing) return;
     setRaceSetupMap(raceSession.mapId);
     setRaceSetupEnvironment(raceSession.envIndex);
+    setRaceSetupReady(false);
     setRaceSetupOpen(true);
   }, [I, o, openingGate, cityMode, cityPreparing]);
+  React.useEffect(() => {
+    if (!raceSetupOpen) return;
+    let cancelled = false;
+    let idleId = 0;
+    let timer = 0;
+    setRaceSetupReady(false);
+    const prepareRace = async () => {
+      const opponentAssets = warmRaceOpponentModels();
+      try {
+        warmRaceCircuit(raceSetupMap);
+      } catch {
+        // Keep setup usable; RaceCircuit can still construct the route on entry.
+      }
+      await opponentAssets;
+      if (!cancelled) setRaceSetupReady(true);
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(() => void prepareRace(), { timeout: 450 });
+    } else {
+      timer = window.setTimeout(() => void prepareRace(), 24);
+    }
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (idleId && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
+    };
+  }, [raceSetupOpen, raceSetupMap]);
   const onCitySceneReady = React.useCallback(() => setCitySceneReady(true), []);
   const onCityDriveAlignmentComplete = React.useCallback(() => setDriveAlignmentReady(true), []);
   const openGarageForCity = React.useCallback(() => {
@@ -442,8 +508,10 @@ export function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [raceMode, toggleRaceLights, toggleRaceBodyGlow]);
+  const onRaceSceneReady = React.useCallback(() => setRaceSceneReady(true), []);
+  const onRaceLoadingComplete = React.useCallback(() => setRaceLoading(false), []);
   const beginRace = React.useCallback(() => {
-    if (!I || o || openingGate || cityMode || cityPreparing) return;
+    if (!raceSetupReady || !I || o || openingGate || cityMode || cityPreparing) return;
     setDriveReady(false);
     setDriveAlignmentReady(false);
     selectRaceTrack(raceSetupMap);
@@ -456,6 +524,8 @@ export function App() {
     setRaceBodyGlowOn(false);
     lockRaceConditions(true);
     setRaceSetupOpen(false);
+    setRaceSceneReady(false);
+    setRaceLoading(true);
     // The Start Race click is the browser gesture needed to initialize audio.
     initAudio();
     liftTimeline.pauseShowcase();
@@ -474,7 +544,7 @@ export function App() {
       setOpeningGate(false);
       setRaceMode(true);
     }, 1350);
-  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, cityMode, cityPreparing]);
+  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, raceSetupReady, cityMode, cityPreparing]);
   const exitRace = React.useCallback(() => {
     setDriveReady(false);
     setDriveAlignmentReady(false);
@@ -497,6 +567,8 @@ export function App() {
       raceTransitionTimer.current = null;
     }
     setRaceMode(!1);
+    setRaceLoading(false);
+    setRaceSceneReady(false);
   }, []);
   // Browsers suspend the context when the tab is backgrounded; re-arm it on the
   // way back so the engine note returns with the race.
@@ -562,7 +634,14 @@ export function App() {
     const x = (cA) => {
       // Race mode owns the keyboard: <RaceDirector/> reads WASD, Shift, Q and
       // Space, so showroom shortcuts would fight driving controls.
-      if (raceMode || cityMode || cityPreparing) return;
+      if (raceMode || cityMode || cityPreparing || mainMenuOpen || pauseMenuOpen || !gameStarted || startGameLoading || o) return;
+      if (pendingCarId) {
+        if (cA.key === "Escape") {
+          cA.preventDefault();
+          setPendingCarId(null);
+        }
+        return;
+      }
       if (
         cA.repeat ||
         cA.ctrlKey ||
@@ -573,6 +652,13 @@ export function App() {
         return;
       if (raceSetupOpen) {
         if (cA.key === "Escape") setRaceSetupOpen(false);
+        return;
+      }
+      if (cA.key === "Escape") {
+        cA.preventDefault();
+        liftTimeline.pauseShowcase();
+        P(null);
+        setPauseMenuOpen(true);
         return;
       }
       if (!(cA.target instanceof HTMLInputElement || cA.target instanceof HTMLTextAreaElement))
@@ -593,10 +679,40 @@ export function App() {
                     : cA.key === "Escape" && (P(null), G.interior && KA("hero"));
     };
     return (window.addEventListener("keydown", x), () => window.removeEventListener("keydown", x));
-  }, [KA, G.interior, replayEntrance, raceMode, cityMode, cityPreparing, raceSetupOpen, toggleNeonLighting, toggleGurney]);
+  }, [KA, G.interior, replayEntrance, raceMode, cityMode, cityPreparing, mainMenuOpen, pauseMenuOpen, gameStarted, startGameLoading, o, pendingCarId, raceSetupOpen, toggleNeonLighting, toggleGurney]);
   const wg = (x) => {
     Mg && tA === x ? mg(!1) : (eg(x), mg(!0));
   };
+  const startGame = React.useCallback(() => {
+    setStartGameLoading(true);
+    l(true);
+    n(null);
+    setGameStarted(true);
+    setMainMenuOpen(false);
+    void unlockAudioFromGesture();
+  }, []);
+  const finishStartGameLoading = React.useCallback(() => setStartGameLoading(false), []);
+  const quitGame = React.useCallback(() => {
+    stopGarageTheme();
+    try {
+      window.close();
+    } catch {
+      // Most browsers only close tabs opened by script; MainMenu shows a fallback.
+    }
+  }, []);
+  const quitToMainMenu = React.useCallback(() => {
+    liftTimeline.pauseShowcase();
+    stopGarageTheme();
+    setPauseMenuOpen(false);
+    setStartGameLoading(false);
+    setGameStarted(false);
+    setMainMenuOpen(true);
+    setGarageGateOpen(false);
+    setOpeningGate(false);
+    setCityExteriorVisible(false);
+  }, []);
+  const resumeGame = React.useCallback(() => setPauseMenuOpen(false), []);
+  const pendingCar = pendingCarId ? getCarById(pendingCarId) : null;
   return (
     <div
       className="relative w-screen h-screen overflow-hidden bg-[#060709] select-none"
@@ -614,12 +730,14 @@ export function App() {
           : cA && n("Please drop a valid binary .glb or .gltf 3D model file.");
       }}
     >
+      {gameStarted && (
+        <>
       <Canvas
         frameloop="demand"
-        shadows={!0}
-        // Clamp high-density screens to avoid rendering several million
-        // unnecessary pixels per frame on phones and retina laptops.
-        dpr={[1, 1.5]}
+        shadows={!raceMode && graphicsQuality !== "low"}
+        // Keep the detailed circuit at native CSS-pixel resolution with no shadow
+        // map; the showroom can still use the selected higher-fidelity preset.
+        dpr={raceMode ? 1 : graphicsQuality === "low" ? 1 : graphicsQuality === "high" ? [1, 2] : [1, 1.5]}
         gl={CANVAS_GL}
         camera={CANVAS_CAMERA}
         onPointerMissed={clearSelection}
@@ -632,6 +750,7 @@ export function App() {
           <>
             <RaceCircuit />
             <RaceOpponents />
+            <RaceSceneReady onReady={onRaceSceneReady} />
             <RaceSunlight />
             <RaceDirector />
             <NitroPlumes />
@@ -669,6 +788,9 @@ export function App() {
             />
           </RaceVehicleRig>
         )}
+        {I && !raceMode && !cityMode && !cityPreparing && (
+          <GarageCarDisplays activeCarId={Q} onSelectCar={SA} />
+        )}
         {!raceMode && (
           <>
             <LiftDirector entranceSeq={E} startAllowed={liftStartRequested} onDriveAlignmentComplete={onCityDriveAlignmentComplete} />
@@ -690,6 +812,8 @@ export function App() {
           </>
         )}
       </Canvas>
+      {!pauseMenuOpen && !pendingCar && (
+        <>
       <div
         className="pointer-events-none fixed inset-0 z-10"
         style={{
@@ -724,20 +848,9 @@ export function App() {
           onToggleBodyGlow={toggleRaceBodyGlow}
         />
       )}
-      {o && !I && (
-        <div className="fixed inset-0 z-50 bg-[#060709]/97 flex flex-col items-center justify-center gap-4 px-6 text-center">
-          <div className="w-48 h-[2px] bg-white/10 rounded-full overflow-hidden">
-            <div className="w-1/2 h-full bg-[#DC1A22] animate-pulse" />
-          </div>
-          <div className="space-y-1">
-            <div className="font-mono-tech text-[11px] uppercase tracking-[0.25em] text-[#F5C518]">
-              Maranello Digital Atelier
-            </div>
-            <div className="font-display text-lg text-white font-medium">
-              Initializing 3D GLTF 2.0 Showroom & PBR Shaders
-            </div>
-          </div>
-        </div>
+      {raceLoading && <RaceLoadingScreen sceneReady={raceSceneReady} onComplete={onRaceLoadingComplete} />}
+      {!mainMenuOpen && (startGameLoading || (o && !I)) && (
+        <LoadingScreen assetReady={!o} onComplete={finishStartGameLoading} />
       )}
       {o && I && (
         <div
@@ -1270,7 +1383,9 @@ export function App() {
             </div>
 
             <div className="flex flex-col-reverse gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-              <span className="font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">Circuit and conditions lock in when the race starts.</span>
+              <span className="font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">
+                {raceSetupReady ? "Circuit, Porsche and Bugatti are ready." : "Preparing circuit and opponent cars…"}
+              </span>
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
@@ -1280,10 +1395,106 @@ export function App() {
                 <button
                   type="button"
                   onClick={beginRace}
-                  disabled={o || !I || openingGate || cityMode || cityPreparing}
+                  disabled={!raceSetupReady || o || !I || openingGate || cityMode || cityPreparing}
                   className="flex items-center gap-2 rounded-xl border border-[#DC1A22]/70 bg-[#DC1A22] px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] disabled:opacity-50 cursor-pointer"
-                ><Flag className="h-3.5 w-3.5" />Start Race</button>
+                ><Flag className="h-3.5 w-3.5" />{raceSetupReady ? "Start Race" : "Preparing…"}</button>
               </div>
+            </div>
+          </section>
+        </div>
+      )}
+        </>
+      )}
+        </>
+      )}
+      <MainMenu
+        open={mainMenuOpen}
+        musicOn={garageMusicOn}
+        lightsOn={garageLightsOn}
+        autoOrbit={N}
+        graphicsQuality={graphicsQuality}
+        onStart={startGame}
+        onQuit={quitGame}
+        onToggleMusic={toggleGarageMusic}
+        onToggleLights={toggleGarageLights}
+        onToggleOrbit={toggleOrbit}
+        onGraphicsQualityChange={setGraphicsQuality}
+      />
+      <MainMenu
+        open={pauseMenuOpen}
+        mode="pause"
+        musicOn={garageMusicOn}
+        lightsOn={garageLightsOn}
+        autoOrbit={N}
+        graphicsQuality={graphicsQuality}
+        onStart={startGame}
+        onResume={resumeGame}
+        onQuit={quitGame}
+        onQuitToTitle={quitToMainMenu}
+        onToggleMusic={toggleGarageMusic}
+        onToggleLights={toggleGarageLights}
+        onToggleOrbit={toggleOrbit}
+        onGraphicsQualityChange={setGraphicsQuality}
+      />
+      {pendingCar && gameStarted && (
+        <div
+          className="fixed inset-0 flex items-center justify-center bg-[#030407]/88 p-4 backdrop-blur-md"
+          style={{ zIndex: 2147483000, isolation: "isolate" }}
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingCarId(null);
+          }}
+        >
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="switch-car-title"
+            aria-describedby="switch-car-description"
+            className="atelier-panel w-full max-w-md rounded-3xl border border-white/12 p-6 shadow-[0_30px_120px_rgba(0,0,0,0.7)] sm:p-8"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="mb-5 flex items-center gap-3">
+              <div className="h-10 w-1 rounded-full bg-[#DC1A22] shadow-[0_0_20px_rgba(220,26,34,0.75)]" />
+              <div>
+                <p className="font-mono-tech text-[10px] uppercase tracking-[0.24em] text-[#DC1A22]">
+                  Garage · Vehicle Selection
+                </p>
+                <h2 id="switch-car-title" className="mt-1 text-xl font-semibold tracking-wide text-white">
+                  Switch cars?
+                </h2>
+              </div>
+            </div>
+            <p id="switch-car-description" className="text-sm leading-relaxed text-zinc-300">
+              Switch from <span className="font-semibold text-white">{g.shortTitle}</span> to{" "}
+              <span className="font-semibold text-white">{pendingCar.shortTitle}</span>?
+            </p>
+            <div className="my-6 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 p-4">
+              <div className="min-w-0 flex-1">
+                <p className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-zinc-500">Current</p>
+                <p className="mt-1 truncate text-sm font-medium text-zinc-200">{g.shortTitle}</p>
+              </div>
+              <span aria-hidden="true" className="text-[#DC1A22]">→</span>
+              <div className="min-w-0 flex-1 text-right">
+                <p className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-zinc-500">Selected car</p>
+                <p className="mt-1 truncate text-sm font-medium text-white">{pendingCar.shortTitle}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setPendingCarId(null)}
+                className="min-w-24 rounded-xl border border-white/15 px-5 py-3 font-mono-tech text-xs font-bold uppercase tracking-[0.16em] text-zinc-200 transition-colors hover:border-white/35 hover:bg-white/8 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={confirmCarSwitch}
+                className="min-w-24 rounded-xl bg-[#DC1A22] px-5 py-3 font-mono-tech text-xs font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#DC1A22]"
+              >
+                Yes
+              </button>
             </div>
           </section>
         </div>

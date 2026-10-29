@@ -54,6 +54,7 @@ import {
   buildRoadSurface,
   checkpointSample,
   sampleMatrix,
+  selectRaceTrack,
   slotsFor,
 } from "./raceTrack";
 
@@ -258,6 +259,19 @@ function circuitData() {
   };
   CACHE.set(mapId, data);
   return data;
+}
+
+/** Build a route's heavy static scene cache before the player confirms Start Race. */
+export function warmRaceCircuit(mapId: string) {
+  if (CACHE.has(mapId)) return true;
+  const previousMapId = raceSession.mapId;
+  if (!selectRaceTrack(mapId)) return false;
+  try {
+    circuitData();
+    return CACHE.has(mapId);
+  } finally {
+    if (previousMapId !== mapId) selectRaceTrack(previousMapId);
+  }
 }
 
 function useInstanceMatrices(ref: any, data: Float32Array) {

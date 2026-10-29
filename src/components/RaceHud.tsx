@@ -218,8 +218,11 @@ export function RaceHud({
   // Single rAF loop, DOM writes only — the canvas is never re-rendered.
   React.useEffect(() => {
     let frame = 0;
-    const tick = () => {
+    let lastUpdate = 0;
+    const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
+      if (now - lastUpdate < 1000 / 30) return;
+      lastUpdate = now;
       const t = raceTelemetry;
       const speed = t.speedKph;
       if (speedRef.current) speedRef.current.textContent = String(Math.round(speed));
