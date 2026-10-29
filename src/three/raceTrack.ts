@@ -39,6 +39,7 @@ const STRIDE = 7;
 const TRACK_LAYOUTS: Record<RaceMapId, [number, number, number][]> = {
   maranello: [
     [-120, 0, -150],
+    [-60, 0, -150],
     [20, 0, -150],
     [110, 2, -110],
     [120, 4, -20],
@@ -47,10 +48,13 @@ const TRACK_LAYOUTS: Record<RaceMapId, [number, number, number][]> = {
     [-60, 0, 90],
     [-140, -1.5, 70],
     [-160, -2.5, -30],
-    [-100, -1, -90],
+    [-240, 0, -150],
+    [-180, 0, -150],
   ],
   riviera: [
     [-155, 0, -110],
+    [-95, 0, -110],
+    [-35, 0, -110],
     [-60, 1, -160],
     [45, 2, -155],
     [135, 3, -95],
@@ -60,10 +64,13 @@ const TRACK_LAYOUTS: Record<RaceMapId, [number, number, number][]> = {
     [-45, 3, 105],
     [-135, 1, 115],
     [-185, 0, 25],
-    [-145, 0, -65],
+    [-270, 0, -110],
+    [-210, 0, -110],
   ],
   alpine: [
     [-150, -2, -130],
+    [-90, -2, -130],
+    [-30, -2, -130],
     [-55, -1, -165],
     [40, 1, -145],
     [120, 4, -105],
@@ -74,7 +81,8 @@ const TRACK_LAYOUTS: Record<RaceMapId, [number, number, number][]> = {
     [-115, -4, 125],
     [-185, -5, 55],
     [-170, -3, -35],
-    [-115, -1, -95],
+    [-270, -2, -130],
+    [-210, -2, -130],
   ],
 };
 
@@ -92,6 +100,10 @@ function rebuildTrackTable(mapId: RaceMapId) {
     "centripetal",
     0.5,
   );
+  // The default 200 arc-length lookup divisions leave long/short track samples
+  // (up to ~24% apart on these routes), which stretches road quads and drifts
+  // the driving sensors. Use a denser lookup so the road ribbon stays uniform.
+  curve.arcLengthDivisions = SAMPLE_COUNT * 8;
   const spaced = curve.getSpacedPoints(SAMPLE_COUNT);
   TRACK_LENGTH = curve.getLength();
   SEGMENT_LENGTH = TRACK_LENGTH / SAMPLE_COUNT;
@@ -340,11 +352,40 @@ function writeRibbon(
   }
 }
 
-function ribbonGeometry(specs: { lateral: number; width: number; yOffset: number; vScale: number }[]) {
+function writeDashedCenterline(positions: number[], uvs: number[], indices: number[]) {
+  const dashLengthSamples = 2;
+  const dashStrideSamples = 8;
+  const halfWidth = 0.07;
+  for (let start = 0; start < SAMPLE_COUNT; start += dashStrideSamples) {
+    const base = positions.length / 3;
+    for (let step = 0; step <= dashLengthSamples; step++) {
+      const sample = (start + step) % SAMPLE_COUNT;
+      const offset = sample * STRIDE;
+      const leftX = samples[offset + TZ];
+      const leftZ = -samples[offset + TX];
+      const horizontal = Math.hypot(leftX, leftZ) || 1;
+      const nx = leftX / horizontal;
+      const nz = leftZ / horizontal;
+      const x = samples[offset + PX];
+      const y = samples[offset + PY] + 0.018;
+      const z = samples[offset + PZ];
+      positions.push(x + nx * halfWidth, y, z + nz * halfWidth, x - nx * halfWidth, y, z - nz * halfWidth);
+      const v = ((start + step) * SEGMENT_LENGTH) / 4;
+      uvs.push(0, v, 1, v);
+      if (step < dashLengthSamples) {
+        const a = base + step * 2;
+        indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+  }
+}
+
+function ribbonGeometry(specs: { lateral: number; width: number; yOffset: number; vScale: number }[], centerDashes = false) {
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
   for (const spec of specs) writeRibbon(positions, uvs, indices, spec.lateral, spec.width, spec.yOffset, spec.vScale);
+  if (centerDashes) writeDashedCenterline(positions, uvs, indices);
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
@@ -365,7 +406,7 @@ export function buildRoadMarkings() {
   return ribbonGeometry([
     { lateral: inset, width: 0.2, yOffset: 0.012, vScale: 4 },
     { lateral: -inset, width: 0.2, yOffset: 0.012, vScale: 4 },
-  ]);
+  ], true);
 }
 
 /** Continuous guard rail capping the barriers — also one draw call. */

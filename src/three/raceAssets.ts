@@ -15,7 +15,7 @@ function finish(texture: CanvasTexture, repeatX = 1, repeatY = 1) {
   texture.colorSpace = SRGBColorSpace;
   texture.wrapS = texture.wrapT = RepeatWrapping;
   texture.repeat.set(repeatX, repeatY);
-  texture.anisotropy = 4;
+  texture.anisotropy = 2;
   texture.needsUpdate = true;
   return texture;
 }
@@ -46,7 +46,7 @@ export function makeAsphaltTextures() {
     context.arc(Math.random() * size, Math.random() * size, radius, 0, Math.PI * 2);
     context.fill();
   }
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < 6000; i++) {
     const shade = 60 + Math.random() * 120;
     context.fillStyle = `rgba(${shade},${shade + 4},${shade + 8},${0.12 + Math.random() * 0.34})`;
     const r = 0.6 + Math.random() * 1.8;
@@ -89,7 +89,7 @@ export function makeGroundTexture() {
   const { canvas, context } = makeCanvas(size, size);
   context.fillStyle = "#22252b";
   context.fillRect(0, 0, size, size);
-  for (let i = 0; i < 2200; i++) {
+  for (let i = 0; i < 1200; i++) {
     const shade = 26 + Math.random() * 60;
     context.fillStyle = `rgba(${shade},${shade + 3},${shade + 6},0.5)`;
     context.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 2, 1 + Math.random() * 2);

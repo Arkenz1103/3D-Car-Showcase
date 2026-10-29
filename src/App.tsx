@@ -127,6 +127,7 @@ export function App() {
     [zg, $] = React.useState(!1),
     [raceMode, setRaceMode] = React.useState(!1),
     [raceLoading, setRaceLoading] = React.useState(false),
+    [raceCinematic, setRaceCinematic] = React.useState(false),
     [raceSceneReady, setRaceSceneReady] = React.useState(false),
     [cityMode, setCityMode] = React.useState(false),
     [cityExteriorVisible, setCityExteriorVisible] = React.useState(false),
@@ -498,7 +499,7 @@ export function App() {
   React.useEffect(() => {
     if (!raceMode) return;
     const onKeyDown = (event) => {
-      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || raceCinematic) return;
       if (event.target?.closest?.("input, textarea, select, [contenteditable=true]")) return;
       if (event.code === "KeyL") toggleRaceLights();
       else if (event.code === "KeyB") toggleRaceBodyGlow();
@@ -507,9 +508,14 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [raceMode, toggleRaceLights, toggleRaceBodyGlow]);
+  }, [raceMode, raceCinematic, toggleRaceLights, toggleRaceBodyGlow]);
   const onRaceSceneReady = React.useCallback(() => setRaceSceneReady(true), []);
   const onRaceLoadingComplete = React.useCallback(() => setRaceLoading(false), []);
+  const onRaceCinematicComplete = React.useCallback(() => {
+    setRaceCinematic(false);
+    raceBodyGlowRef.current = false;
+    setRaceBodyGlowOn(false);
+  }, []);
   const beginRace = React.useCallback(() => {
     if (!raceSetupReady || !I || o || openingGate || cityMode || cityPreparing) return;
     setDriveReady(false);
@@ -520,11 +526,14 @@ export function App() {
     raceLightsRef.current = automaticLights;
     setRaceLightsOn(automaticLights);
     setRaceLightsEnabled(automaticLights);
-    raceBodyGlowRef.current = false;
-    setRaceBodyGlowOn(false);
+    // Switch on the paint-matched underglow for the cinematic left-side pass;
+    // it is restored to the normal off state when the countdown begins.
+    raceBodyGlowRef.current = true;
+    setRaceBodyGlowOn(true);
     lockRaceConditions(true);
     setRaceSetupOpen(false);
     setRaceSceneReady(false);
+    setRaceCinematic(true);
     setRaceLoading(true);
     // The Start Race click is the browser gesture needed to initialize audio.
     initAudio();
@@ -568,6 +577,7 @@ export function App() {
     }
     setRaceMode(!1);
     setRaceLoading(false);
+    setRaceCinematic(false);
     setRaceSceneReady(false);
   }, []);
   // Browsers suspend the context when the tab is backgrounded; re-arm it on the
@@ -735,9 +745,9 @@ export function App() {
       <Canvas
         frameloop="demand"
         shadows={!raceMode && graphicsQuality !== "low"}
-        // Keep the detailed circuit at native CSS-pixel resolution with no shadow
-        // map; the showroom can still use the selected higher-fidelity preset.
-        dpr={raceMode ? 1 : graphicsQuality === "low" ? 1 : graphicsQuality === "high" ? [1, 2] : [1, 1.5]}
+        // A slightly reduced race resolution and no shadow map free GPU time for
+        // stable 60 fps; the showroom keeps the selected higher-fidelity preset.
+        dpr={raceMode ? 0.9 : graphicsQuality === "low" ? 1 : graphicsQuality === "high" ? [1, 2] : [1, 1.5]}
         gl={CANVAS_GL}
         camera={CANVAS_CAMERA}
         onPointerMissed={clearSelection}
@@ -752,9 +762,9 @@ export function App() {
             <RaceOpponents />
             <RaceSceneReady onReady={onRaceSceneReady} />
             <RaceSunlight />
-            <RaceDirector />
-            <NitroPlumes />
-            <RaceCrashSparks />
+            {!raceLoading && <RaceDirector onCinematicComplete={onRaceCinematicComplete} />}
+            {!raceLoading && <NitroPlumes />}
+            {!raceLoading && <RaceCrashSparks />}
           </>
         )}
         {/* The rig wraps the car in BOTH modes. In the showroom it stays an
@@ -839,7 +849,7 @@ export function App() {
       {cityMode && (
         <CityHud headlightsOn={cityHeadlightsOn} onToggleHeadlights={toggleCityHeadlights} />
       )}
-      {raceMode && (
+      {raceMode && !raceLoading && !raceCinematic && (
         <RaceHud
           onExit={exitRace}
           lightsOn={raceLightsOn}

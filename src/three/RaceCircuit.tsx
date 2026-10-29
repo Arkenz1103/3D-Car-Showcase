@@ -9,8 +9,8 @@
  *    are single `instancedMesh` draw calls sharing one geometry + material, and
  *    keep their computed bounding spheres so frustum culling still discards the
  *    off-screen batches.
- *  - Only four real point lights exist: they are pooled and snapped to the
- *    nearest lamp heads, so the shader always sees a constant light count.
+ *  - Only two real point lights exist: they are pooled and snapped to the
+ *    nearest lamp heads, reducing fragment-lighting cost on weaker GPUs.
  *  - The road, markings and guard rail are one merged ribbon each; every static
  *    mesh opts out of raycasting (`raycast={() => null}`).
  */
@@ -24,6 +24,7 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
+  DynamicDrawUsage,
   InstancedMesh,
   Matrix4,
   PlaneGeometry,
@@ -60,7 +61,7 @@ import {
 
 const BARRIER_STRIDE = 2;
 const LAMP_STRIDE = 18;
-const LIGHT_POOL = 4;
+const LIGHT_POOL = 2;
 const LAMP_HEIGHT = 7.4;
 
 /**
@@ -69,7 +70,7 @@ const LAMP_HEIGHT = 7.4;
  * the floor wraps them to the top) instead of being respawned — so a long race
  * never allocates a particle.
  */
-const RAIN_COUNT = 1700;
+const RAIN_COUNT = 700;
 const RAIN_AREA = 44;
 const RAIN_HEIGHT = 26;
 
@@ -214,7 +215,8 @@ function circuitData() {
     rainSpeeds[i] = 21 + random() * 15;
   }
   const rainGeometry = new BufferGeometry();
-  rainGeometry.setAttribute("position", new BufferAttribute(rainPositions, 3));
+  const rainPositionAttribute = new BufferAttribute(rainPositions, 3).setUsage(DynamicDrawUsage);
+  rainGeometry.setAttribute("position", rainPositionAttribute);
 
   const data = {
     roadGeometry,
@@ -350,7 +352,7 @@ const LampPool = memo(function LampPool({ positions }: { positions: Float32Array
 
   return (
     <>
-      {[0, 1, 2, 3].map((k) => (
+      {Array.from({ length: LIGHT_POOL }, (_, k) => k).map((k) => (
         <pointLight
           key={k}
           ref={(node: PointLight) => {
