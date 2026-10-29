@@ -13,7 +13,7 @@ import {
   getComponentSpec,
 } from "@/data/catalog";
 import { loadVehicleAsset } from "@/lib/gltf";
-import { ENVIRONMENTS, RACE_MAPS, lockRaceConditions, raceSession, setEnvironment, setRaceLightsEnabled } from "@/three/raceSession";
+import { ENVIRONMENTS, RACE_DIFFICULTIES, RACE_MAPS, lockRaceConditions, raceSession, setEnvironment, setRaceDifficulty, setRaceLightsEnabled } from "@/three/raceSession";
 import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
 import { CityHud } from "@/components/CityHud";
@@ -142,6 +142,7 @@ export function App() {
     [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
     [raceSetupMap, setRaceSetupMap] = React.useState(raceSession.mapId),
     [raceSetupEnvironment, setRaceSetupEnvironment] = React.useState(raceSession.envIndex),
+    [raceSetupDifficulty, setRaceSetupDifficulty] = React.useState(raceSession.difficulty),
     [raceSetupReady, setRaceSetupReady] = React.useState(false),
     [garageGateOpen, setGarageGateOpen] = React.useState(false),
     [openingGate, setOpeningGate] = React.useState(false),
@@ -387,6 +388,7 @@ export function App() {
     if (!I || o || openingGate || cityMode || cityPreparing) return;
     setRaceSetupMap(raceSession.mapId);
     setRaceSetupEnvironment(raceSession.envIndex);
+    setRaceSetupDifficulty(raceSession.difficulty);
     setRaceSetupReady(false);
     setRaceSetupOpen(true);
   }, [I, o, openingGate, cityMode, cityPreparing]);
@@ -522,6 +524,7 @@ export function App() {
     setDriveAlignmentReady(false);
     selectRaceTrack(raceSetupMap);
     setEnvironment(raceSetupEnvironment);
+    setRaceDifficulty(raceSetupDifficulty);
     const automaticLights = raceSetupEnvironment !== 0;
     raceLightsRef.current = automaticLights;
     setRaceLightsOn(automaticLights);
@@ -553,7 +556,7 @@ export function App() {
       setOpeningGate(false);
       setRaceMode(true);
     }, 1350);
-  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, raceSetupReady, cityMode, cityPreparing]);
+  }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, raceSetupDifficulty, raceSetupReady, cityMode, cityPreparing]);
   const exitRace = React.useCallback(() => {
     setDriveReady(false);
     setDriveAlignmentReady(false);
@@ -1385,6 +1388,35 @@ export function App() {
                           <span className="block font-display text-sm font-semibold">{environment.label}</span>
                           <span className="mt-0.5 block font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">{note}</span>
                         </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section aria-labelledby="race-difficulty-heading">
+                <div className="mb-3">
+                  <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">03 · Rival pace</div>
+                  <h3 id="race-difficulty-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose difficulty</h3>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {RACE_DIFFICULTIES.map((difficulty) => {
+                    const selected = raceSetupDifficulty === difficulty.id;
+                    return (
+                      <button
+                        key={difficulty.id}
+                        type="button"
+                        onClick={() => setRaceSetupDifficulty(difficulty.id)}
+                        aria-pressed={selected}
+                        className={`rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#DC1A22]/70 bg-[#DC1A22]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="font-display text-sm font-semibold">{difficulty.label}</span>
+                          <span className={`font-mono-tech text-[9px] uppercase tracking-wider ${selected ? "text-[#FCA5A5]" : "text-zinc-600"}`}>
+                            {selected ? "Selected" : "Select"}
+                          </span>
+                        </span>
+                        <span className="mt-1 block font-mono-tech text-[9px] leading-relaxed text-zinc-500">{difficulty.description}</span>
                       </button>
                     );
                   })}

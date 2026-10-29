@@ -1,6 +1,7 @@
 // @ts-nocheck
 /**
- * Race session settings: selected track, weather preset and camera mount.
+ * Race session settings: selected track, weather preset, rival difficulty and
+ * camera mount.
  *
  * These are module-level settings read by the circuit and race loop. HUD and
  * setup consumers subscribe to changes instead of rebuilding simulation state.
@@ -144,6 +145,14 @@ export const RACE_MAPS = [
 
 export type RaceMapId = (typeof RACE_MAPS)[number]["id"];
 
+export const RACE_DIFFICULTIES = [
+  { id: "easy", label: "Easy", description: "Slower rivals with lighter corner pace." },
+  { id: "normal", label: "Normal", description: "Balanced rival pace and catch-up." },
+  { id: "hard", label: "Hard", description: "Faster rivals with stronger acceleration." },
+] as const;
+
+export type RaceDifficulty = (typeof RACE_DIFFICULTIES)[number]["id"];
+
 export const CAMERA_MODES = [
   { id: "chase", label: "Chase" },
   { id: "hood", label: "Hood" },
@@ -154,6 +163,7 @@ export const CAMERA_MODES = [
 export const raceSession = {
   mapId: "maranello" as RaceMapId,
   envIndex: 1,
+  difficulty: "normal" as RaceDifficulty,
   camMode: 0,
   carLightsOn: false,
 };
@@ -161,7 +171,7 @@ export const raceSession = {
 const listeners = new Set<(session: typeof raceSession) => void>();
 let raceConditionsLocked = false;
 
-/** Locks the selected route and weather for the duration of an active race. */
+/** Locks the selected route, weather and difficulty for the duration of a race. */
 export function lockRaceConditions(locked: boolean) {
   raceConditionsLocked = locked;
 }
@@ -193,6 +203,12 @@ export function setEnvironment(index: number) {
   const next = ((index % ENVIRONMENTS.length) + ENVIRONMENTS.length) % ENVIRONMENTS.length;
   if (next === raceSession.envIndex) return;
   raceSession.envIndex = next;
+  emit();
+}
+
+export function setRaceDifficulty(difficulty: RaceDifficulty) {
+  if (raceConditionsLocked || !RACE_DIFFICULTIES.some((option) => option.id === difficulty) || raceSession.difficulty === difficulty) return;
+  raceSession.difficulty = difficulty;
   emit();
 }
 

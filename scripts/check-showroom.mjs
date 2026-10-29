@@ -70,7 +70,7 @@ for (const [assetFile, expectedCount] of [["car-2.ts", 3], ["car-3.ts", 1], ["sf
 }
 const raceSessionModule = loadModule("src/three/raceSession.ts");
 const raceTrackModule = loadModule("src/three/raceTrack.ts", { "./raceSession": raceSessionModule });
-const raceEngineModule = loadModule("src/three/raceEngine.ts", { "./raceTrack": raceTrackModule });
+const raceEngineModule = loadModule("src/three/raceEngine.ts", { "./raceTrack": raceTrackModule, "./raceSession": raceSessionModule });
 const cityLayoutModule = loadModule("src/three/cityLayout.ts");
 assert(cityLayoutModule.CITY_BUILDINGS.length >= 45, "The open city should have a dense, varied block layout");
 assert(cityLayoutModule.CITY_SKYLINE.length >= 20, "The city should frame its routes with a distant harbour skyline");
@@ -395,6 +395,11 @@ const raceHudSource = fs.readFileSync("src/components/RaceHud.tsx", "utf8");
 const raceTrackSource = fs.readFileSync("src/three/raceTrack.ts", "utf8");
 const raceCircuitSource = fs.readFileSync("src/three/RaceCircuit.tsx", "utf8");
 const raceAssetsSource = fs.readFileSync("src/three/raceAssets.ts", "utf8");
+const raceSessionSource = fs.readFileSync("src/three/raceSession.ts", "utf8");
+assert.match(raceSessionSource, /RACE_DIFFICULTIES = \[[\s\S]*id: "easy"[\s\S]*id: "normal"[\s\S]*id: "hard"[\s\S]*difficulty: "normal"[\s\S]*setRaceDifficulty\(difficulty: RaceDifficulty\)/, "Race setup must provide Easy, Normal, and Hard difficulty choices with Normal as the default");
+assert.match(appSource, /race-difficulty-heading[\s\S]*RACE_DIFFICULTIES\.map[\s\S]*aria-pressed=\{selected\}/, "The race setup must expose selectable, accessible difficulty choices");
+assert.match(appSource, /selectRaceTrack\(raceSetupMap\)[\s\S]*setEnvironment\(raceSetupEnvironment\)[\s\S]*setRaceDifficulty\(raceSetupDifficulty\)[\s\S]*lockRaceConditions\(true\)/, "Selected difficulty must be applied before the race locks its setup");
+assert.match(raceEngineSource, /AI_DIFFICULTY_TUNING = \{[\s\S]*easy: \{ topSpeed: 0\.82[\s\S]*normal: \{ topSpeed: 1[\s\S]*hard: \{ topSpeed: 1\.08[\s\S]*const tuning = AI_DIFFICULTY_TUNING\[raceSession\.difficulty\][\s\S]*tuning\.cornering[\s\S]*tuning\.catchUp[\s\S]*tuning\.acceleration/, "Difficulty must change rival speed, cornering, catch-up and acceleration");
 assert.match(raceCircuitSource, /const RAIN_COUNT = 700[\s\S]*new BufferAttribute\(rainPositions, 3\)\.setUsage\(DynamicDrawUsage\)/, "Rain particles must stay lightweight for race performance");
 assert.match(raceCircuitSource, /const LIGHT_POOL = 2/, "Street-light pooling must limit per-fragment lighting work");
 assert.match(appSource, /dpr=\{raceMode \? 0\.9/, "Race mode should render slightly below native pixel density to preserve GPU headroom");
@@ -462,7 +467,7 @@ assert.match(fs.readFileSync("src/three/RaceCircuit.tsx", "utf8"), /export funct
 assert.match(raceEngineSource, /braking: new Uint8Array\(AI_COUNT\)[\s\S]*raceAi\.braking\[car\] = speedError < -0\.08/, "AI braking telemetry must drive opponent brake lights without React state");
 assert.match(raceEngineSource, /START_GRID_ROW_SPACING = 6\.4[\s\S]*PLAYER_GRID_LATERAL = -1\.65[\s\S]*AI_GRID_LATERAL = 1\.65[\s\S]*function resetAi\(\)[\s\S]*const row = car === 0 \? 0 : 1[\s\S]*const gridLane = AI_GRID_LATERAL[\s\S]*placeAi\(car, gridIndex, gridLane\)/, "The start grid must alternate left, right, left across its two road sides");
 assert.match(raceEngineSource, /laneCenter: -1\.8, laneSwing: 2\.5[\s\S]*laneCenter: 2\.2, laneSwing: 2\.4[\s\S]*const laneChoice =[\s\S]*coursePhase[\s\S]*MathUtils\.clamp\(laneChoice/, "AI opponents must choose different evolving lanes rather than follow one fixed racing line");
-assert.match(raceEngineSource, /target \*= 1 \+ MathUtils\.clamp\(gap \* 0\.55, -0\.18, 0\.18\)/, "Opponents must remain within a credible racing distance without teleporting");
+assert.match(raceEngineSource, /const gap = playerProgress[\s\S]*target \*= 1 \+ MathUtils\.clamp\(gap \* tuning\.catchUp, -tuning\.paceRange, tuning\.paceRange\)/, "Opponent catch-up must remain smooth and use the selected difficulty tuning");
 assert.match(raceDirectorSource, /Angle 1: low right-front quarter[\s\S]*cameraY = raceDrive\.y \+ 0\.42[\s\S]*Angle 2: a hard cut to the left profile[\s\S]*const angle = -Math\.PI \/ 2 \+ 0\.24 \* eased[\s\S]*Angle 3: eagle-eye establishing shot[\s\S]*gridCenterX = \(raceDrive\.x \+ raceAi\.x\[0\] \+ raceAi\.x\[1\]\) \/ 3[\s\S]*Angle 4: third-person rear chase framing[\s\S]*cameraX = raceDrive\.x - camForward\.x \* 6\.5[\s\S]*Blend from the rear third-person shot into the main chase rig over half a second/, "The pre-race camera must show the right, left, all-cars eagle-eye, and rear views in order");
 assert.match(raceDirectorSource, /camera\.up\.set\(0, 1, 0\)[\s\S]*camera\.lookAt\(camLook\)/, "Race cameras must use world-up orientation to keep the horizon stable");
 assert.doesNotMatch(raceDirectorSource, /camera\.rotation\.z\s*=|mount\.roll/, "Camera framing must not force Euler roll values that can flip the rendered view");
@@ -583,6 +588,7 @@ for (const steer of [1, -1]) {
 }
 const initialWeather = raceSessionModule.raceSession.envIndex;
 const initialMap = raceSessionModule.raceSession.mapId;
+const initialDifficulty = raceSessionModule.raceSession.difficulty;
 assert.deepEqual(
   Array.from(raceSessionModule.ENVIRONMENTS, (environment) => environment.id),
   ["day", "night", "rain"],
@@ -595,14 +601,24 @@ raceSessionModule.setRaceLightsEnabled(false);
 assert.equal(raceSessionModule.raceSession.carLightsOn, false, "The in-race lights switch must disable car lights");
 raceSessionModule.setEnvironment(0);
 assert.equal(raceSessionModule.raceSession.envIndex, 0, "Weather can be selected before a race begins");
+assert.deepEqual(
+  Array.from(raceSessionModule.RACE_DIFFICULTIES, (difficulty) => difficulty.id),
+  ["easy", "normal", "hard"],
+  "Race setup must offer three opponent difficulty levels",
+);
+raceSessionModule.setRaceDifficulty("hard");
+assert.equal(raceSessionModule.raceSession.difficulty, "hard", "Difficulty can be selected before a race begins");
 raceSessionModule.lockRaceConditions(true);
 raceSessionModule.setEnvironment(2);
 raceSessionModule.setRaceMap("alpine");
+raceSessionModule.setRaceDifficulty("easy");
 assert.equal(raceSessionModule.raceSession.envIndex, 0, "Weather must remain locked after race start");
 assert.equal(raceSessionModule.raceSession.mapId, initialMap, "The chosen route must remain locked after race start");
+assert.equal(raceSessionModule.raceSession.difficulty, "hard", "The selected difficulty must remain locked after race start");
 raceSessionModule.lockRaceConditions(false);
 raceSessionModule.setEnvironment(initialWeather);
 raceSessionModule.setRaceMap(initialMap);
+raceSessionModule.setRaceDifficulty(initialDifficulty);
 raceEngineModule.startRaceSequence();
 for (let frame = 0; frame < 306; frame++) raceEngineModule.stepRace(1 / 60);
 assert.equal(raceEngineModule.racePhase(), "racing", "The standing countdown must reach the race phase");
@@ -710,6 +726,20 @@ assert.equal(
   }),
 );
 
+raceSessionModule.lockRaceConditions(false);
+const difficultyPaces = {};
+for (const difficulty of ["easy", "normal", "hard"]) {
+  raceSessionModule.setRaceDifficulty(difficulty);
+  raceEngineModule.startRaceSequence();
+  for (let frame = 0; frame < 306 + 180; frame++) raceEngineModule.stepRace(1 / 60);
+  difficultyPaces[difficulty] = raceEngineModule.raceAi.speed[0];
+}
+assert(
+  difficultyPaces.easy < difficultyPaces.normal * 0.85 && difficultyPaces.hard > difficultyPaces.normal * 1.1,
+  `AI pace must be clearly easier, baseline, and harder (Easy ${difficultyPaces.easy}, Normal ${difficultyPaces.normal}, Hard ${difficultyPaces.hard})`,
+);
+raceSessionModule.setRaceDifficulty(initialDifficulty);
+
 console.log(
-  "PASS: showroom, city gate entry and free-drive, steering, lights, race controls, minimap, drift, and turbo regressions.",
+  "PASS: showroom, city gate entry and free-drive, steering, lights, race difficulty and controls, minimap, drift, and turbo regressions.",
 );
