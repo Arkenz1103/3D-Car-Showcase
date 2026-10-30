@@ -28,7 +28,8 @@ import { stopCityDrive } from "@/three/cityDrive";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit, warmRaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
-import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, startGarageTheme, stopGarageTheme, unlockAudioFromGesture } from "@/three/raceAudio";
+import { disposeAudio, initAudio, playLiftServoSound, resumeAudio, unlockAudioFromGesture } from "@/three/raceAudio";
+import { GarageSoundtrack, type GarageSoundtrackHandle } from "@/components/GarageSoundtrack";
 import { NitroPlumes, RaceCrashSparks, RaceDirector, RaceSceneReady, RaceSunlight, RaceVehicleRig } from "@/three/RaceDirector";
 import { RenderCoordinator } from "@/three/RenderCoordinator";
 import { orientCameraGoal } from "@/three/cameraFraming";
@@ -54,8 +55,6 @@ import {
   Map,
   Maximize2,
   Moon,
-  Music2,
-  VolumeX,
   Mountain,
   MousePointerClick,
   Palette,
@@ -148,7 +147,7 @@ export function App() {
     [openingGate, setOpeningGate] = React.useState(false),
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
     [neonLightsOn, setNeonLightsOn] = React.useState(false),
-    [garageMusicOn, setGarageMusicOn] = React.useState(true);
+    [garageMusicOn, setGarageMusicOn] = React.useState(false);
   const [liftStartRequested, setLiftStartRequested] = React.useState(false);
   const [mainMenuOpen, setMainMenuOpen] = React.useState(true);
   const [pauseMenuOpen, setPauseMenuOpen] = React.useState(false);
@@ -164,40 +163,16 @@ export function App() {
     }
   });
   const requestSequence = React.useRef(0);
+  const garageSoundtrackRef = React.useRef<GarageSoundtrackHandle>(null);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
   const raceBodyGlowRef = React.useRef(false);
-  const garageMusicRef = React.useRef(garageMusicOn);
-  const garageModeRef = React.useRef(gameStarted && !raceMode && !cityMode);
-  garageMusicRef.current = garageMusicOn;
-  garageModeRef.current = gameStarted && !raceMode && !cityMode;
   React.useEffect(
     () => () => {
       if (raceTransitionTimer.current !== null) window.clearTimeout(raceTransitionTimer.current);
     },
     [],
   );
-  // Best-effort audio startup lets browsers that permit autoplay sound the
-  // entrance immediately. Restricted browsers resume Web Audio on first input.
-  React.useEffect(() => {
-    initAudio();
-    const unlock = () => {
-      void unlockAudioFromGesture().then((ready) => {
-        if (ready && garageMusicRef.current && garageModeRef.current) startGarageTheme();
-      });
-    };
-    window.addEventListener("pointerdown", unlock, true);
-    window.addEventListener("keydown", unlock, true);
-    return () => {
-      window.removeEventListener("pointerdown", unlock, true);
-      window.removeEventListener("keydown", unlock, true);
-    };
-  }, []);
-  React.useEffect(() => {
-    if (gameStarted && garageMusicOn && !raceMode && !cityMode) startGarageTheme();
-    else stopGarageTheme();
-    return () => stopGarageTheme();
-  }, [gameStarted, garageMusicOn, raceMode, cityMode]);
   React.useEffect(() => {
     try {
       window.localStorage.setItem("maranello-graphics-quality", graphicsQuality);
@@ -611,20 +586,7 @@ export function App() {
     }, 1350);
   }, [openingGate, raceMode, cityMode, cityPreparing, garageGateOpen, openGarageForCity]);
   const toggleGarageLights = React.useCallback(() => setGarageLightsOn((on) => !on), []);
-  const toggleGarageMusic = React.useCallback(() => {
-    const next = !garageMusicRef.current;
-    garageMusicRef.current = next;
-    setGarageMusicOn(next);
-    if (!next) {
-      stopGarageTheme();
-      return;
-    }
-    if (garageModeRef.current) {
-      void unlockAudioFromGesture().then((ready) => {
-        if (ready && garageMusicRef.current && garageModeRef.current) startGarageTheme();
-      });
-    }
-  }, []);
+  const toggleGarageMusic = React.useCallback(() => garageSoundtrackRef.current?.togglePlayback(), []);
   const toggleNeonLighting = React.useCallback(() => setNeonLightsOn((enabled) => !enabled), []);
   const toggleGurney = React.useCallback(() => {
     const enabled = !nA;
@@ -701,6 +663,7 @@ export function App() {
     action();
   };
   const startGame = React.useCallback(() => {
+    garageSoundtrackRef.current?.startRandomTrack();
     setStartGameLoading(true);
     l(true);
     n(null);
@@ -708,9 +671,10 @@ export function App() {
     setMainMenuOpen(false);
     void unlockAudioFromGesture();
   }, []);
-  const finishStartGameLoading = React.useCallback(() => setStartGameLoading(false), []);
+  const finishStartGameLoading = React.useCallback(() => {
+    setStartGameLoading(false);
+  }, []);
   const quitGame = React.useCallback(() => {
-    stopGarageTheme();
     try {
       window.close();
     } catch {
@@ -719,7 +683,6 @@ export function App() {
   }, []);
   const quitToMainMenu = React.useCallback(() => {
     liftTimeline.pauseShowcase();
-    stopGarageTheme();
     setPauseMenuOpen(false);
     setStartGameLoading(false);
     setGameStarted(false);
@@ -728,7 +691,10 @@ export function App() {
     setOpeningGate(false);
     setCityExteriorVisible(false);
   }, []);
-  const resumeGame = React.useCallback(() => setPauseMenuOpen(false), []);
+  const resumeGame = React.useCallback(() => {
+    garageSoundtrackRef.current?.resumePlayback();
+    setPauseMenuOpen(false);
+  }, []);
   const pendingCar = pendingCarId ? getCarById(pendingCarId) : null;
   return (
     <div
@@ -901,8 +867,7 @@ export function App() {
           </button>
         </div>
       )}
-      {!zg && !raceMode && (
-        <header className="fixed top-0 inset-x-0 z-30 px-2 sm:px-4 py-2 pointer-events-none">
+      <header hidden={raceMode || zg} className="fixed top-0 inset-x-0 z-30 px-2 sm:px-4 py-2 pointer-events-none">
           <div className="mx-auto flex w-full max-w-[1800px] items-center justify-between gap-2 sm:gap-3">
             <div className="hidden xl:flex min-w-0 max-w-[260px] shrink items-center gap-3 rounded-2xl atelier-pill px-3 py-2 pointer-events-auto">
               <div className="flex w-1 shrink-0 flex-col gap-[2px]">
@@ -1084,10 +1049,12 @@ export function App() {
                       {garageLightsOn ? <Sun className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" /> : <Moon className="h-3.5 w-3.5 shrink-0 text-[#E7B5FF]" />}
                       <span className="min-w-0"><span className="block truncate">Garage lights</span><span className="block text-[9px] text-zinc-500">{garageLightsOn ? "On" : "Off"}</span></span>
                     </button>
-                    <button type="button" onClick={(event) => runToolbarAction(event, toggleGarageMusic)} aria-pressed={garageMusicOn} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
-                      {garageMusicOn ? <Music2 className="h-3.5 w-3.5 shrink-0 text-[#F5C518]" /> : <VolumeX className="h-3.5 w-3.5 shrink-0 text-zinc-500" />}
-                      <span className="min-w-0"><span className="block truncate">Garage music</span><span className="block text-[9px] text-zinc-500">{garageMusicOn ? "On" : "Muted"}</span></span>
-                    </button>
+                    <GarageSoundtrack
+                      ref={garageSoundtrackRef}
+                      active={gameStarted && !pauseMenuOpen && !raceMode && !raceCinematic && !raceLoading && !cityMode && !cityPreparing && !openingGate}
+                      isPaused={pauseMenuOpen}
+                      onPlaybackChange={setGarageMusicOn}
+                    />
                     <button type="button" onClick={(event) => runToolbarAction(event, () => XA((value) => !value))} aria-pressed={Tg} className="flex min-w-0 items-center gap-2 rounded-lg border border-white/8 bg-black/15 px-2.5 py-2 text-left text-[11px] text-zinc-200 transition-colors hover:border-white/20 hover:bg-white/5">
                       <Lightbulb className={`h-3.5 w-3.5 shrink-0 ${Tg ? "text-[#F5C518]" : "text-zinc-500"}`} />
                       <span className="min-w-0"><span className="block truncate">Vehicle lights</span><span className="block text-[9px] text-zinc-500">{Tg ? "On" : "Off"}</span></span>
@@ -1126,8 +1093,7 @@ export function App() {
               </button>
             </div>
           </div>
-        </header>
-      )}
+      </header>
       {zg && (
         <button
           type="button"

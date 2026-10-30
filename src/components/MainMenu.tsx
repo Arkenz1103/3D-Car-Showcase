@@ -125,7 +125,7 @@ export function MainMenu({
             <div className="mx-auto mb-5 grid h-11 w-11 place-items-center rounded-xl border border-[#DC1A22]/50 bg-[#DC1A22]/10">
               <span className="h-4 w-4 rotate-45 border-2 border-[#DC1A22]" />
             </div>
-            <div className="font-mono-tech text-[10px] uppercase tracking-[0.28em] text-[#F5C518]">Maranello Digital Atelier</div>
+            <div className="font-display text-xl sm:text-2xl font-black uppercase italic leading-tight tracking-[0.045em] text-rose-50" style={{ WebkitTextStroke: "0.7px rgba(255, 142, 170, 0.7)", textShadow: "0 1px 0 rgba(102, 17, 39, 0.95), 0 0 8px rgba(255, 92, 133, 0.95), 0 0 22px rgba(246, 37, 98, 0.62), 0 0 36px rgba(45, 214, 255, 0.24)" }}>CITY OF SPEEDRUNNERS</div>
             <h1 id={mode === "pause" ? "pause-menu-title" : "main-menu-title"} className="mt-3 font-display text-3xl font-bold uppercase tracking-[0.08em] text-white">{mode === "pause" ? "Paused" : "Main Menu"}</h1>
           </div>
           <div className="flex flex-col gap-3">
@@ -172,7 +172,7 @@ export function MainMenu({
             <section>
               <h3 className="mb-3 font-mono-tech text-[9px] uppercase tracking-[0.2em] text-zinc-500">Experience</h3>
               <div className="space-y-2">
-                <SettingToggle label="Garage music" description="Original instrumental theme" enabled={musicOn} onClick={onToggleMusic} icon={musicOn ? Music2 : VolumeX} />
+                <SettingToggle label="Garage music" description="HTML5 garage soundtrack playlist" enabled={musicOn} onClick={onToggleMusic} icon={musicOn ? Music2 : VolumeX} />
                 <SettingToggle label="Garage lighting" description="Showroom illumination" enabled={lightsOn} onClick={onToggleLights} icon={lightsOn ? Sun : Moon} />
                 <SettingToggle label="Auto-orbit camera" description="Slow 360° showroom rotation" enabled={autoOrbit} onClick={onToggleOrbit} icon={RotateCw} />
               </div>
