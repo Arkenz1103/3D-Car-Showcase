@@ -95,6 +95,7 @@ const cityDriveSource = fs.readFileSync("src/three/cityDrive.ts", "utf8");
 const cityHudSource = fs.readFileSync("src/components/CityHud.tsx", "utf8");
 const cityDirectorSource = fs.readFileSync("src/three/CityDriveDirector.tsx", "utf8");
 const raceAudioSource = fs.readFileSync("src/three/raceAudio.ts", "utf8");
+const soundtrackSource = fs.readFileSync("src/components/GarageSoundtrack.tsx", "utf8");
 const showroomSource = fs.readFileSync("src/three/Showroom.tsx", "utf8");
 const appSource = fs.readFileSync("src/App.tsx", "utf8");
 const garageGateSource = showroomSource.match(/function GarageGate\([\s\S]*?\n}\n\nfunction ExteriorApron/);
@@ -117,9 +118,19 @@ assert.match(appSource, /!mainMenuOpen && \(startGameLoading \|\| \(o && !I\)\)/
 assert.match(appSource, /\{gameStarted && \([\s\S]*?<Canvas/, "The showroom scene must not mount until Start Game is pressed");
 assert.match(appSource, /const startGame = React\.useCallback\(\(\) => \{[\s\S]*setStartGameLoading\(true\)[\s\S]*l\(true\)[\s\S]*setGameStarted\(true\)[\s\S]*setMainMenuOpen\(false\)/, "Every Start Game action must begin a loading screen before revealing the showroom");
 const loadingScreenSource = fs.readFileSync("src/components/LoadingScreen.tsx", "utf8");
+const htmlSource = fs.readFileSync("index.html", "utf8");
+assert.match(htmlSource, /<title>CITY OF SPEEDRUNNERS<\/title>/, "The browser window title must use the new game branding");
+assert.match(htmlSource, /rel="preload" as="image" href="\/images\/city-of-speedrunners-loading-v2\.png" fetchpriority="high"/, "The loading artwork must be preloaded before the screen renders");
+assert.match(loadingScreenSource, /LOADING_BACKGROUND_IMAGE = "\/images\/city-of-speedrunners-loading-v2\.png"[\s\S]*new Image\(\)[\s\S]*image\.onload[\s\S]*setBackgroundReady\(true\)/, "The loading screen must gracefully preload the local artwork");
+assert.match(loadingScreenSource, /backgroundReady \? "opacity-100" : "opacity-0"[\s\S]*backgroundImage: `url\("\$\{LOADING_BACKGROUND_IMAGE\}"\)`[\s\S]*backgroundSize: "cover"[\s\S]*backgroundRepeat: "no-repeat"/, "The loading screen must reveal the versioned artwork as a single full-bleed image after it loads");
+assert.match(loadingScreenSource, /transition-opacity duration-700[\s\S]*isExiting \? "pointer-events-none opacity-0"/, "The loading overlay must fade out smoothly after completion");
+assert.match(loadingScreenSource, /CITY OF SPEEDRUNNERS[\s\S]*textShadow/, "The loading screen must prominently display the neon game title");
+assert.match(mainMenuSource, /textShadow[\s\S]*CITY OF SPEEDRUNNERS/, "The main menu must display the new neon-branded game title");
+assert.doesNotMatch(`${htmlSource}${mainMenuSource}${loadingScreenSource}`, /Maranello Digital Atelier|FERRARI SF90 STRADALE/, "Old showroom branding must be removed from the loading screen and primary UI");
 assert.match(loadingScreenSource, /useState\(1\)/, "The loading counter must begin at one percent");
-assert.match(loadingScreenSource, /LOADING_DURATION_MS = 1800[\s\S]*Math\.min\(100, 1 \+ Math\.floor/, "The loading counter must animate upward and stop at one hundred percent");
-assert.match(loadingScreenSource, /Loading \{progress\}%/, "The loading screen must show the live percentage");
+assert.match(loadingScreenSource, /LOADING_DURATION_MS = 4000[\s\S]*Math\.min\(100, 1 \+ Math\.floor/, "The loading counter must animate upward and stop at one hundred percent");
+assert.match(loadingScreenSource, /LOADING[\s\S]*\{progress\}%/, "The loading screen must show the live percentage alongside its bar");
+assert.match(loadingScreenSource, /h-2 w-full[\s\S]*role="progressbar"[\s\S]*aria-valuenow=\{progress\}[\s\S]*width: `\$\{progress\}%`/, "The loading percentage must update a visible 1-to-100 progress bar");
 assert.match(loadingScreenSource, /if \(!assetReady \|\| progress < 100\) return/, "The loading screen must remain until both assets and 100 percent are ready");
 assert.match(appSource, /<MainMenu[\s\S]*onStart=\{startGame\}[\s\S]*onQuit=\{quitGame\}/, "The menu must connect its Start Game and Quit Game actions to the app");
 const homeMenuSource = mainMenuSource.slice(mainMenuSource.indexOf('{screen === "home"'), mainMenuSource.indexOf('{screen === "settings"'));
@@ -157,8 +168,56 @@ assert.match(cityDirectorSource, /KeyN[\s\S]*selectCityGear\(0\)[\s\S]*KeyR[\s\S
 assert.match(cityHudSource, /Start engine[\s\S]*Select neutral[\s\S]*Select reverse/, "The HUD must expose ignition and neutral/reverse gear controls");
 assert.match(raceAudioSource, /export function playEngineStartSound[\s\S]*starter[\s\S]*catchFire[\s\S]*stopEngineStartSound/, "The synthesized ignition sound must include starter cranking and engine catch phases");
 assert.match(cityHudSource, /handleEngineToggle[\s\S]*playEngineStartSound/, "Starting the engine from the HUD must trigger the ignition sound");
-assert.match(raceAudioSource, /export function startGarageTheme[\s\S]*const bpm = 92[\s\S]*export function stopGarageTheme/, "The garage must have an original, procedurally generated looping theme");
-assert.match(appSource, /garageMusicOn[\s\S]*toggleGarageMusic[\s\S]*Showroom controls[\s\S]*Garage music[\s\S]*Muted/, "The organized showroom controls menu must expose an accessible garage music toggle");
+const playlistBlock = soundtrackSource.match(/export const SOUNDTRACK_PLAYLIST = \[([\s\S]*?)\] as const;/);
+assert(playlistBlock, "The garage must declare the public MP3 soundtrack playlist");
+const playlistEntries = [...playlistBlock[1].matchAll(/\{\s*title: "([^"]+)"\s*,\s*artist: "([^"]+)"\s*,\s*url: "([^"]+)"\s*,?\s*\}/g)].map(([, title, artist, url]) => ({ title, artist, url }));
+assert.deepEqual(playlistEntries, [
+  { title: "BANDIT", artist: "Don Toliver", url: "/Garage-Soundtrack/Bandit.mp3" },
+  { title: "Precision", artist: "Big Sean", url: "/Garage-Soundtrack/Big%20Sean%20-%20Precision.mp3" },
+  { title: "Sprinter", artist: "Central Cee & Dave", url: "/Garage-Soundtrack/Central%20Cee%20x%20Dave%20-%20Sprinter%20%5BMusic%20Video%5D.mp3" },
+  { title: "Tobey", artist: "Eminem ft. Big Sean & BabyTron", url: "/Garage-Soundtrack/Eminem%20-%20Tobey%20feat.%20Big%20Sean%20&%20BabyTron%20(Official%20Music%20Video).mp3" },
+  { title: "Big Dawgs", artist: "Hanumankind & Kalmi", url: "/Garage-Soundtrack/Hanumankind,%20Kalmi%20-%20Hanumankind%20%E2%80%93%20Big%20Dawgs%20Prod.%20Kalmi%20(Official%20Music%20Video)%20Def%20Jam%20India.mp3" },
+  { title: "Let's Go", artist: "Key Glock", url: "/Garage-Soundtrack/Key%20Glock%20-%20Let's%20Go%20(Official%20Visualizer).mp3" },
+  { title: "Two Days", artist: "Killer Mike ft. Ty Dolla $ign", url: "/Garage-Soundtrack/Killer%20Mike%20-%20Two%20Days%20ft.%20Ty%20Dolla%20$ign%20[Audio].mp3" },
+  { title: "Go Hard", artist: "Lil Baby", url: "/Garage-Soundtrack/Lil%20Baby%20-%20Go%20Hard.mp3" },
+], "The playlist must map all eight tracks to the exact uploaded filenames");
+for (const track of playlistEntries) {
+  const publicFile = `public${decodeURIComponent(track.url)}`;
+  assert(fs.existsSync(publicFile), `The local audio URL must resolve to the uploaded file: ${publicFile}`);
+  assert(fs.statSync(publicFile).size > 0, `The local audio file must not be empty: ${publicFile}`);
+}
+assert.match(soundtrackSource, /const \[currentTrackIndex, setCurrentTrackIndex\] = React\.useState<TrackIndex>\(\(\) => Math\.floor\(Math\.random\(\) \* SOUNDTRACK_PLAYLIST\.length\)\)/, "The selected soundtrack track must initialize randomly when the player mounts");
+assert.match(soundtrackSource, /const trackIndexRef = React\.useRef\(currentTrackIndex\)/, "The audio manager ref must start in sync with the random initial selection");
+assert.match(appSource, /const startGame = React\.useCallback[\s\S]*garageSoundtrackRef\.current\?\.startRandomTrack\(\)[\s\S]*setStartGameLoading\(true\)[\s\S]*setGameStarted\(true\)/, "Start Game must select and start a random audio track synchronously in the click handler");
+assert.equal([...appSource.matchAll(/garageSoundtrackRef\.current\?\.startRandomTrack\(\)/g)].length, 1, "Start Game must be the only caller of startRandomTrack in the app");
+assert.match(soundtrackSource, /const playTrackAt = React\.useCallback[\s\S]*const bgm = new Audio\(track\.url\)[\s\S]*bgm\.preload = "auto"[\s\S]*bgm\.muted = false[\s\S]*bgm\.volume = 1\.0[\s\S]*bgm\.play\(\)/, "The playlist manager must preload and play local HTML5 audio tracks unmuted at full volume");
+assert.match(soundtrackSource, /const startOnFirstPageClick = \(\) => \{[\s\S]*if \(audioRef\.current \|\| playbackErrorRef\.current\) return;[\s\S]*playSelectedTrack\(\)/, "The first page click must start the selected track only while the player is READY TO PLAY");
+assert.match(soundtrackSource, /window\.addEventListener\("click", startOnFirstPageClick, \{ once: true \}\)/, "The ready-state soundtrack must listen for the first click anywhere on the page");
+assert.match(soundtrackSource, /const playRandomTrack = React\.useCallback\(\(excludeIndex\?: number\) => \{[\s\S]*Math\.floor\(Math\.random\(\) \* count\)[\s\S]*playTrackAt\(index\)/, "Every random-play request must choose a playlist entry using Math.random");
+assert.match(soundtrackSource, /const startRandomTrack = React\.useCallback\(\(\) => \{[\s\S]*const randomIndex = Math\.floor\(Math\.random\(\) \* SOUNDTRACK_PLAYLIST\.length\)[\s\S]*playTrackAt\(randomIndex\)/, "Each Start Game action must choose a new random track and pass it to the audio loader");
+assert.match(soundtrackSource, /bgm\.onended = \(\) => \{[\s\S]*playRandomTrackRef\.current\(index\)/, "Track end must automatically select another random playlist item");
+assert.match(soundtrackSource, /const togglePlayback = React\.useCallback[\s\S]*bgm\.pause\(\)[\s\S]*bgm\.play\(\)/, "The custom Play/Pause control must directly call the HTML5 Audio methods");
+assert.match(soundtrackSource, /playAdjacentTrack\(-1\)[\s\S]*aria-label="Previous soundtrack"[\s\S]*playAdjacentTrack\(1\)[\s\S]*aria-label="Next soundtrack"/, "The custom controls must provide Previous and Next buttons");
+assert.match(soundtrackSource, /\{track\.title\}[\s\S]*\{track\.artist\}/, "The soundtrack overlay must display both track title and artist");
+assert.match(appSource, /active=\{gameStarted && !pauseMenuOpen && !raceMode && !raceCinematic && !raceLoading && !cityMode[\s\S]*isPaused=\{pauseMenuOpen\}/, "Garage music must receive the explicit pause state");
+assert.match(soundtrackSource, /if \(isPaused\)[\s\S]*cancelFade\(\)[\s\S]*bgm\.pause\(\)[\s\S]*reportPlaying\(false\)/, "Pausing the game must immediately pause the existing audio element");
+assert.match(soundtrackSource, /if \(!active\)[\s\S]*fadeAudioTo\(0[\s\S]*bgm\.pause\(\)/, "Garage music may fade and pause for race or city transitions");
+assert.match(soundtrackSource, /bgm\.onended = \(\) => \{[\s\S]*isPausedRef\.current[\s\S]*!playingRef\.current[\s\S]*playRandomTrackRef\.current\(index\)/, "Track-end auto-advance must be ignored while paused or not playing");
+assert.match(soundtrackSource, /const playTrackAt = React\.useCallback\(\(requestedIndex: number\) => \{[\s\S]*if \(isPausedRef\.current\) return/, "No track may be loaded while the game is paused");
+assert.match(soundtrackSource, /wantsPlaybackRef\.current && bgm\.paused[\s\S]*bgm\.play\(\)/, "Garage music must resume at its saved track position when the pause menu closes");
+assert.match(appSource, /const resumeGame = React\.useCallback\(\(\) => \{[\s\S]*garageSoundtrackRef\.current\?\.resumePlayback\(\)[\s\S]*setPauseMenuOpen\(false\)/, "Resume Game must request playback directly before closing the pause menu");
+const resumeGameBody = appSource.match(/const resumeGame = React\.useCallback\(\(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] ?? "";
+assert.doesNotMatch(resumeGameBody, /startRandomTrack|currentTime|currentTrackIndex/, "Resume Game must not restart or seek the selected track");
+const directResumeBody = soundtrackSource.match(/const resumePlayback = React\.useCallback\(\(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] ?? "";
+assert.match(directResumeBody, /audioRef\.current\?\.play\(\)/, "Resume Game must call play on the existing audio element");
+assert.doesNotMatch(directResumeBody, /startRandomTrack|new Audio|currentTime|setCurrentTrackIndex|trackIndexRef|\.pause\(|\.volume|\.muted|setPlayback|reportPlaying|cancelFade/, "Resume must only request playback on the existing audio element, without changing track state");
+const activeAudioEffect = soundtrackSource.match(/React\.useEffect\(\(\) => \{\n    const bgm = audioRef\.current;[\s\S]*?\n  \}, \[active, cancelFade, fadeAudioTo, isPaused, reportPlaying\]\);/)?.[0] ?? "";
+assert.ok(activeAudioEffect, "The soundtrack state effect must listen only to game activity and stable audio callbacks");
+assert.doesNotMatch(activeAudioEffect, /startRandomTrack|setCurrentTrackIndex|trackIndexRef|currentTrackIndex|currentTime/, "Unpausing must not restart, reset, or seek the selected soundtrack track");
+assert.doesNotMatch(soundtrackSource, /YT\.Player|youtube\.com|iframe_api|videoId|playerHostRef|video player/i, "The soundtrack component must not contain YouTube player code or a video element");
+assert.doesNotMatch(appSource, /youtube\.com|iframe_api|YOUTUBE_SOUNDTRACK/, "The app must not load or reference the YouTube IFrame API");
+assert.doesNotMatch(mainMenuSource, /YouTube soundtrack/i, "The menu description must reference the HTML5 soundtrack instead of YouTube");
+assert.match(appSource, /<header hidden=\{raceMode \|\| zg\}/, "The hidden race/cinema header must stay mounted so the selected playlist and resume state survive transitions");
 assert.match(appSource, /CityDriveDirector carId=\{Q\}/, "Free-drive performance must follow the selected car model");
 assert.match(appSource, /setGarageGateOpen\(true\)[\s\S]*setCityMode\(true\)/,  "City mode must only begin after the gate-opening transition");
 assert.match(appSource, /liftTimeline\.alignForDrive\(Math\.PI\)/, "Drive ON must start the slow turntable alignment toward the garage gate");
@@ -170,9 +229,9 @@ const liftDirectorSource = fs.readFileSync("src/three/LiftDirector.tsx", "utf8")
 assert.match(liftDirectorSource, /LIFT_TIMING\.ascend - liftTimeline\.elapsed[\s\S]*playLiftServoSound\(remaining, "ascend"\)[\s\S]*LIFT_TIMING\.showcase - liftTimeline\.elapsed[\s\S]*playLiftServoSound\(remaining, "showcase"\)/, "Lift ascent and showcase rotation must each have phase-synced audio");
 assert.match(liftDirectorSource, /!startAllowed/, "The lift director must stay parked until the Lift the Car button is activated");
 assert.match(appSource, /fixed inset-0 z-30[\s\S]*onClick=\{replayEntrance\}[\s\S]*Lift the Car/, "A prominent Lift the Car button must be visible before the first ascent");
-assert.match(appSource, /Best-effort audio startup[\s\S]*initAudio\(\)/, "The site must attempt lift audio during startup where browser policy permits");
-assert.match(appSource, /pointerdown[\s\S]*unlockAudioFromGesture\(\)/, "The first user gesture after refresh must unlock audio when browser policy requires it");
-assert.match(appSource, /const replayEntrance = React\.useCallback\((?:async )?\(\) => \{[\s\S]*unlockAudioFromGesture\(\)/, "The lift button must unlock audio before replaying the entrance");
+assert.match(appSource, /const startGame = React\.useCallback[\s\S]*garageSoundtrackRef\.current\?\.startRandomTrack\(\)[\s\S]*setGameStarted\(true\)[\s\S]*unlockAudioFromGesture\(\)/, "Start Game must select and start a random HTML5 audio track synchronously in the user gesture");
+assert.match(appSource, /const replayEntrance = React\.useCallback\([\s\S]*unlockAudioFromGesture\(\)/, "The entrance replay must also unlock audio when browser policy requires it");
+assert.match(appSource, /const enterCityDrive = React\.useCallback\((?:async )?\(\) => \{[\s\S]*unlockAudioFromGesture\(\)/, "City drive preparation must unlock its servo audio from the user's gesture");
 assert.match(appSource, /runToolbarAction\(event, replayEntrance\)[\s\S]*Lift the car[\s\S]*Replay showcase/, "The organized controls menu must provide a clearly labeled Lift the Car action");
 assert.match(appSource, /Keep the garage view and closed gate unchanged while the turntable aligns/);
 const driveToggleSource = appSource.match(/const enterCityDrive = React\.useCallback\((?:async )?\(\) => \{([\s\S]*?)\n  \}, \[cityMode, driveReady/);
