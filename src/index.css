@@ -187,6 +187,35 @@ button:focus-visible {
   animation: race-wrongway 620ms steps(2, end) infinite;
 }
 
+@keyframes online-race-count-in {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scale(0.74);
+    filter: blur(6px);
+  }
+  64% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.04);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.online-race-count-in {
+  animation: online-race-count-in 720ms cubic-bezier(.16, 1, .3, 1) both;
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .online-race-count-in {
+    animation: none;
+  }
+}
+
 @keyframes race-start-light-blink {
   0%,
   49% {
