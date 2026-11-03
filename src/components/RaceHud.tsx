@@ -11,6 +11,8 @@
 import { Camera, Flag, Gauge, Lightbulb, RotateCcw, Sparkles, Timer, Trophy, Zap } from "lucide-react";
 import React from "react";
 import { AI_COUNT, formatRaceTime, raceAi, raceDrive, raceTelemetry, restartRace, pauseRace, subscribeRace } from "@/three/raceEngine";
+import { getCarById } from "@/data/catalog";
+import { RACE_OPPONENT_CARS } from "@/data/raceOpponentCars";
 import { SAMPLE_COUNT, sampleX, sampleZ } from "@/three/raceTrack";
 import { triggerCrashImpact } from "@/three/raceAudio";
 import {
@@ -109,12 +111,14 @@ function buildRaceMinimap() {
 
 export function RaceHud({
   onExit,
+  playerCarId,
   lightsOn,
   bodyGlowOn,
   onToggleLights,
   onToggleBodyGlow,
 }: {
   onExit: () => void;
+  playerCarId: string;
   lightsOn: boolean;
   bodyGlowOn: boolean;
   onToggleLights: () => void;
@@ -158,6 +162,20 @@ export function RaceHud({
   });
   const minimap = React.useMemo(() => buildRaceMinimap(), [session.mapId]);
   const selectedMapName = RACE_MAPS.find((map) => map.id === session.mapId)?.name || "Race Circuit";
+  const raceCars = React.useMemo(() => {
+    const playerCar = getCarById(playerCarId);
+    return [
+      { id: "player", tag: "YOU", brand: playerCar.brand, model: playerCar.model, year: playerCar.year, color: playerCar.accentHex },
+      ...RACE_OPPONENT_CARS.slice(0, AI_COUNT).map((car, index) => ({
+        id: car.id,
+        tag: `AI 0${index + 2}`,
+        brand: car.brand,
+        model: car.model,
+        year: car.year,
+        color: car.accentHex,
+      })),
+    ];
+  }, [playerCarId]);
 
   React.useEffect(
     () =>
@@ -174,9 +192,12 @@ export function RaceHud({
   React.useEffect(() => {
     let hideToast = 0;
     let hideCrash = 0;
+    let hideCountdown = 0;
     const unsubscribe = subscribeRace((event: any) => {
       if (event.type === "countdown") {
-        setCountdown(event.value > 0 ? event.value : null);
+        window.clearTimeout(hideCountdown);
+        setCountdown(event.value);
+        if (event.value === 0) hideCountdown = window.setTimeout(() => setCountdown(null), 700);
       } else if (event.type === "lap") {
         setToast(
           `LAP ${event.lap} · ${formatRaceTime(event.lapTime)}${event.best ? " · BEST LAP" : ""}`,
@@ -199,6 +220,8 @@ export function RaceHud({
         setPhase(event.phase);
         setPaused(event.phase === "paused");
         if (event.phase === "countdown") {
+          window.clearTimeout(hideCountdown);
+          setCountdown(5);
           setSummary(null);
           setToast(null);
         }
@@ -208,85 +231,88 @@ export function RaceHud({
       unsubscribe();
       window.clearTimeout(hideToast);
       window.clearTimeout(hideCrash);
+      window.clearTimeout(hideCountdown);
     };
   }, []);
 
-  // Single rAF loop, DOM writes only — the canvas is never re-rendered.
+  // One 60 Hz DOM-only HUD loop; stop it entirely while the race is paused.
   React.useEffect(() => {
     let frame = 0;
     let lastUpdate = 0;
     const tick = (now: number) => {
-      frame = requestAnimationFrame(tick);
-      if (now - lastUpdate < 1000 / 30) return;
-      lastUpdate = now;
-      const t = raceTelemetry;
-      const speed = t.speedKph;
-      if (speedRef.current) speedRef.current.textContent = String(Math.round(speed));
-      if (gearRef.current) gearRef.current.textContent = t.gearLabel;
-      if (rpmRef.current) rpmRef.current.textContent = `${Math.round(t.rpm / 100) * 100} rpm`;
-      if (needleRef.current)
-        needleRef.current.setAttribute("transform", `rotate(${kphAngle(speed).toFixed(2)} 100 100)`);
-      if (speedArcRef.current)
-        speedArcRef.current.setAttribute(
-          "stroke-dashoffset",
-          (L_MAIN * (1 - Math.min(1, speed / MAX_KPH))).toFixed(2),
-        );
-      if (rpmArcRef.current) {
-        const ratio = Math.max(0, Math.min(1, (t.rpm - 800) / 8000));
-        rpmArcRef.current.setAttribute("stroke-dashoffset", (L_RPM * (1 - ratio)).toFixed(2));
-        rpmArcRef.current.setAttribute("stroke", t.redline ? "#DC1A22" : "#38BDF8");
-      }
-      if (lapRef.current) lapRef.current.textContent = `LAP ${t.lap} / ${t.laps}`;
-      if (lapTimeRef.current) lapTimeRef.current.textContent = formatRaceTime(t.lapTime);
-      if (bestRef.current) bestRef.current.textContent = t.bestLap ? formatRaceTime(t.bestLap) : "--:--.---";
-      if (totalRef.current) totalRef.current.textContent = formatRaceTime(t.totalTime);
-      if (nitroRef.current) nitroRef.current.style.transform = `scaleY(${t.nitro.toFixed(3)})`;
-      if (nitroWrapRef.current) {
-        nitroWrapRef.current.setAttribute("aria-valuenow", String(Math.round(t.nitro * 100)));
-        nitroWrapRef.current.dataset.active = t.nitroActive ? "1" : "0";
-        nitroWrapRef.current.dataset.empty = t.nitro < 0.01 ? "1" : "0";
-        nitroWrapRef.current.dataset.charging = !t.turboReady && !t.nitroActive ? "1" : "0";
-      }
-      if (nitroLabelRef.current)
-        nitroLabelRef.current.textContent = t.nitroActive
-          ? "BOOST ACTIVE"
-          : t.turboReady
-            ? "READY · USE Q"
-            : t.nitro < 0.01
-              ? "DRIVE PRECISELY"
-              : "RECHARGING";
-      if (nitroPercentRef.current)
-        nitroPercentRef.current.textContent = `${Math.round(Math.max(0, Math.min(1, t.nitro)) * 100)}%`;
-      if (minimapPlayerRef.current) {
-        const x = minimap.offsetX + raceDrive.x * minimap.scale;
-        const y = minimap.offsetY + raceDrive.z * minimap.scale;
-        const heading = (-raceDrive.heading * 180) / Math.PI;
-        minimapPlayerRef.current.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
-      }
-      for (let car = 0; car < AI_COUNT; car++) {
-        const marker = minimapOpponentRefs.current[car];
-        if (!marker) continue;
-        const x = minimap.offsetX + raceAi.x[car] * minimap.scale;
-        const y = minimap.offsetY + raceAi.z[car] * minimap.scale;
-        const heading = (-raceAi.heading[car] * 180) / Math.PI;
-        marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
-      }
-      if (positionRef.current) positionRef.current.textContent = ordinal(t.position);
-      if (progressRef.current) progressRef.current.style.transform = `scaleY(${Math.min(1, t.progress)})`;
-      if (topSpeedRef.current) topSpeedRef.current.textContent = `${Math.round(t.topSpeedKph)} km/h`;
-      if (driftRef.current) driftRef.current.style.opacity = String(Math.min(1, t.drift * 0.35));
-      if (wrongWayRef.current) wrongWayRef.current.style.opacity = t.wrongWay ? "1" : "0";
-      if (sectorRef.current) {
-        const dots = sectorRef.current.children;
-        for (let i = 0; i < dots.length; i++) {
-          const reached = i <= t.checkpoint;
-          (dots[i] as HTMLElement).style.background = reached ? "#F5C518" : "rgba(255,255,255,0.16)";
+      if (paused) return;
+      if (now - lastUpdate >= 1000 / 60) {
+        lastUpdate = now;
+        const t = raceTelemetry;
+        const speed = t.speedKph;
+        if (speedRef.current) speedRef.current.textContent = String(Math.round(speed));
+        if (gearRef.current) gearRef.current.textContent = t.gearLabel;
+        if (rpmRef.current) rpmRef.current.textContent = `${Math.round(t.rpm / 100) * 100} rpm`;
+        if (needleRef.current)
+          needleRef.current.setAttribute("transform", `rotate(${kphAngle(speed).toFixed(2)} 100 100)`);
+        if (speedArcRef.current)
+          speedArcRef.current.setAttribute(
+            "stroke-dashoffset",
+            (L_MAIN * (1 - Math.min(1, speed / MAX_KPH))).toFixed(2),
+          );
+        if (rpmArcRef.current) {
+          const ratio = Math.max(0, Math.min(1, (t.rpm - 800) / 8000));
+          rpmArcRef.current.setAttribute("stroke-dashoffset", (L_RPM * (1 - ratio)).toFixed(2));
+          rpmArcRef.current.setAttribute("stroke", t.redline ? "#DC1A22" : "#38BDF8");
+        }
+        if (lapRef.current) lapRef.current.textContent = `LAP ${t.lap} / ${t.laps}`;
+        if (lapTimeRef.current) lapTimeRef.current.textContent = formatRaceTime(t.lapTime);
+        if (bestRef.current) bestRef.current.textContent = t.bestLap ? formatRaceTime(t.bestLap) : "--:--.---";
+        if (totalRef.current) totalRef.current.textContent = formatRaceTime(t.totalTime);
+        if (nitroRef.current) nitroRef.current.style.transform = `scaleY(${t.nitro.toFixed(3)})`;
+        if (nitroWrapRef.current) {
+          nitroWrapRef.current.setAttribute("aria-valuenow", String(Math.round(t.nitro * 100)));
+          nitroWrapRef.current.dataset.active = t.nitroActive ? "1" : "0";
+          nitroWrapRef.current.dataset.empty = t.nitro < 0.01 ? "1" : "0";
+          nitroWrapRef.current.dataset.charging = !t.turboReady && !t.nitroActive ? "1" : "0";
+        }
+        if (nitroLabelRef.current)
+          nitroLabelRef.current.textContent = t.nitroActive
+            ? "BOOST ACTIVE"
+            : t.turboReady
+              ? "READY · USE Q"
+              : t.nitro < 0.01
+                ? "DRIVE PRECISELY"
+                : "RECHARGING";
+        if (nitroPercentRef.current)
+          nitroPercentRef.current.textContent = `${Math.round(Math.max(0, Math.min(1, t.nitro)) * 100)}%`;
+        if (minimapPlayerRef.current) {
+          const x = minimap.offsetX + raceDrive.x * minimap.scale;
+          const y = minimap.offsetY + raceDrive.z * minimap.scale;
+          const heading = (-raceDrive.heading * 180) / Math.PI;
+          minimapPlayerRef.current.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+        }
+        for (let car = 0; car < AI_COUNT; car++) {
+          const marker = minimapOpponentRefs.current[car];
+          if (!marker) continue;
+          const x = minimap.offsetX + raceAi.x[car] * minimap.scale;
+          const y = minimap.offsetY + raceAi.z[car] * minimap.scale;
+          const heading = (-raceAi.heading[car] * 180) / Math.PI;
+          marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+        }
+        if (positionRef.current) positionRef.current.textContent = ordinal(t.position);
+        if (progressRef.current) progressRef.current.style.transform = `scaleY(${Math.min(1, t.progress)})`;
+        if (topSpeedRef.current) topSpeedRef.current.textContent = `${Math.round(t.topSpeedKph)} km/h`;
+        if (driftRef.current) driftRef.current.style.opacity = String(Math.min(1, t.drift * 0.35));
+        if (wrongWayRef.current) wrongWayRef.current.style.opacity = t.wrongWay ? "1" : "0";
+        if (sectorRef.current) {
+          const dots = sectorRef.current.children;
+          for (let i = 0; i < dots.length; i++) {
+            const reached = i <= t.checkpoint;
+            (dots[i] as HTMLElement).style.background = reached ? "#F5C518" : "rgba(255,255,255,0.16)";
+          }
         }
       }
+      frame = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(tick);
+    if (!paused) frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, []);
+  }, [paused]);
 
   const resume = () => pauseRace(false);
   const retry = () => {
@@ -331,6 +357,27 @@ export function RaceHud({
           {[0, 1, 2, 3, 4, 5].map((index) => (
             <span key={index} className="w-4 h-[3px] rounded-full bg-white/15 transition-colors" />
           ))}
+        </div>
+        <div role="group" aria-label="Race car lineup" className="mt-3 border-t border-white/10 pt-2">
+          <div className="mb-1.5 flex items-center justify-between font-mono-tech text-[8px] uppercase tracking-[0.18em] text-zinc-500">
+            <span>Race lineup</span>
+            <span>{raceCars.length} cars</span>
+          </div>
+          <div className="space-y-1.5">
+            {raceCars.map((car) => (
+              <div key={car.id} className="flex min-w-0 items-start gap-2" title={`${car.brand} ${car.model} · ${car.year}`}>
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: car.color }} />
+                <div className="min-w-0 leading-tight">
+                  <div className="truncate font-mono-tech text-[8px] uppercase tracking-[0.1em] text-zinc-400">
+                    {car.tag} · {car.brand}
+                  </div>
+                  <div className="truncate text-[10px] font-medium text-zinc-100">
+                    {car.model} <span className="text-[8px] font-normal text-zinc-500">{car.year}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -557,22 +604,30 @@ export function RaceHud({
           <div
             className="flex flex-col items-center gap-2"
             role="status"
-            aria-label={`Race starts in ${countdown}`}
+            aria-label={countdown === 0 ? "GO" : `Race starts in ${countdown}`}
           >
-            <div className="flex items-center gap-3 rounded-2xl border border-white/25 bg-[#080a10] px-5 py-4 shadow-[0_12px_48px_rgba(0,0,0,0.65)] backdrop-blur-md sm:gap-4 sm:px-7 sm:py-5">
-              {[0, 1, 2, 3, 4].map((light) => {
-                const lightColor = countdown >= 3
-                  ? "border-red-100 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
-                  : countdown === 2
-                    ? "border-amber-100 bg-amber-400 shadow-[0_0_22px_rgba(251,191,36,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
-                    : "border-emerald-100 bg-emerald-400 shadow-[0_0_22px_rgba(74,222,128,1),inset_0_1px_7px_rgba(255,255,255,0.85)]";
-                return (
-                  <span
-                    key={`${countdown}-${light}`}
-                    className={`race-start-light h-6 w-6 rounded-full border transition-colors duration-200 sm:h-9 sm:w-9 ${lightColor}`}
-                  />
-                );
-              })}
+            <div className="flex flex-col items-center gap-2 rounded-2xl border border-white/25 bg-[#080a10] px-5 py-3 shadow-[0_12px_48px_rgba(0,0,0,0.65)] backdrop-blur-md sm:px-7 sm:py-4">
+              <span
+                key={countdown}
+                className={`race-countdown-number font-display text-3xl font-black leading-none tracking-[0.16em] sm:text-4xl ${countdown >= 3 ? "text-red-300" : countdown === 2 ? "text-amber-300" : "text-emerald-300"}`}
+              >
+                {countdown === 0 ? "GO" : countdown}
+              </span>
+              <div className="flex items-center gap-3 sm:gap-4">
+                {[0, 1, 2, 3, 4].map((light) => {
+                  const lightColor = countdown >= 3
+                    ? "border-red-100 bg-red-500 shadow-[0_0_22px_rgba(239,68,68,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
+                    : countdown === 2
+                      ? "border-amber-100 bg-amber-400 shadow-[0_0_22px_rgba(251,191,36,1),inset_0_1px_7px_rgba(255,255,255,0.85)]"
+                      : "border-emerald-100 bg-emerald-400 shadow-[0_0_22px_rgba(74,222,128,1),inset_0_1px_7px_rgba(255,255,255,0.85)]";
+                  return (
+                    <span
+                      key={`${countdown}-${light}`}
+                      className={`race-start-light h-6 w-6 rounded-full border transition-colors duration-200 sm:h-9 sm:w-9 ${lightColor}`}
+                    />
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}

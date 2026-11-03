@@ -121,25 +121,25 @@ export const ENVIRONMENTS: EnvPreset[] = [
 
 export const RACE_MAPS = [
   {
-    id: "maranello",
-    name: "Maranello Street Circuit",
-    region: "Maranello, Italy",
-    description: "A technical city loop with a long start straight and linked sweepers.",
-    style: "city",
+    id: "manila",
+    name: "Manila Bay Street Circuit",
+    region: "Manila, Philippines",
+    description: "A broad bayfront start straight flowing into tight Metro Manila boulevard blocks.",
+    style: "tropical-city",
   },
   {
-    id: "riviera",
-    name: "Riviera Coast Run",
-    region: "French Riviera",
-    description: "Fast seaside bends, a tight harbor hairpin, and rolling coastal elevation.",
-    style: "coast",
+    id: "tokyo",
+    name: "Tokyo Bay Neon Run",
+    region: "Tokyo, Japan",
+    description: "A fast waterfront expressway loop with flowing sweepers and a compact harbor turn.",
+    style: "neon-bay",
   },
   {
-    id: "alpine",
-    name: "Alpine Pass",
-    region: "Dolomites, Italy",
-    description: "A compact mountain route with sharper turns and changing elevation.",
-    style: "mountain",
+    id: "new-york",
+    name: "New York Manhattan Circuit",
+    region: "New York, United States",
+    description: "A flat avenue sprint with long straights, rounded city blocks and a central chicane.",
+    style: "urban-grid",
   },
 ] as const;
 
@@ -161,7 +161,7 @@ export const CAMERA_MODES = [
 
 /** Night is the tuned default, so index 1 keeps the original circuit look. */
 export const raceSession = {
-  mapId: "maranello" as RaceMapId,
+  mapId: "manila" as RaceMapId,
   envIndex: 1,
   difficulty: "normal" as RaceDifficulty,
   camMode: 0,

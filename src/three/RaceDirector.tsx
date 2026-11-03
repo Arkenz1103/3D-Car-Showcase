@@ -66,19 +66,26 @@ function releaseKeys() {
   raceInput.handbrake = false;
 }
 
+const RACE_FRAME_LEAD_MS = 1.5;
+
 function requestNextRaceFrame(state: any, gate: { last: number; timer: number }) {
   const now = performance.now();
-  const elapsed = now - gate.last;
-  if (elapsed >= RACE_FRAME_INTERVAL) {
+  const remaining = RACE_FRAME_INTERVAL - (now - gate.last);
+  if (remaining <= RACE_FRAME_LEAD_MS) {
+    if (gate.timer) {
+      window.clearTimeout(gate.timer);
+      gate.timer = 0;
+    }
     gate.last = now;
     state.invalidate();
-  } else if (!gate.timer) {
-    gate.timer = window.setTimeout(() => {
-      gate.timer = 0;
-      gate.last = performance.now();
-      state.invalidate();
-    }, RACE_FRAME_INTERVAL - elapsed);
+    return;
   }
+  if (gate.timer) return;
+  gate.timer = window.setTimeout(() => {
+    gate.timer = 0;
+    gate.last = performance.now();
+    state.invalidate();
+  }, remaining - RACE_FRAME_LEAD_MS);
 }
 
 /**
@@ -123,7 +130,7 @@ export const RaceSceneReady = memo(function RaceSceneReady({ onReady }: { onRead
   return null;
 });
 
-export const RaceVehicleRig = memo(function RaceVehicleRig({ children }: { children: React.ReactNode }) {
+export const RaceVehicleRig = memo(function RaceVehicleRig({ children, raceMode = false }: { children: React.ReactNode; raceMode?: boolean }) {
   const group = useRef<any>(null);
   useLayoutEffect(() => {
     if (group.current) group.current.rotation.order = "YXZ";
@@ -134,7 +141,7 @@ export const RaceVehicleRig = memo(function RaceVehicleRig({ children }: { child
     if (raceDrive.active) {
       node.position.set(raceDrive.x, raceDrive.y, raceDrive.z);
       node.rotation.set(raceDrive.pitch, raceDrive.heading, raceDrive.roll, "YXZ");
-      markShadowsDirty();
+      if (!raceMode) markShadowsDirty();
       return;
     }
     // Leaving the circuit hands the car back to the showroom turntable: the rig
@@ -621,7 +628,10 @@ export const RaceDirector = memo(function RaceDirector({
       onCinematicComplete();
     }
 
-    clock.current += delta;
+    // One bounded frame delta feeds every time-based race subsystem. Physics
+    // retains its own clamp as a defensive boundary for standalone callers.
+    const frameDelta = Math.min(Math.max(delta, 0), 0.05);
+    clock.current += frameDelta;
 
     // Analogue ramps: a tap is a tap, a hold is a hold.
     raceInput.throttle = held.forward ? 1 : 0;
@@ -629,12 +639,14 @@ export const RaceDirector = memo(function RaceDirector({
     raceInput.steer = (held.left ? 1 : 0) - (held.right ? 1 : 0);
     raceInput.handbrake = held.drift || held.handbrake;
 
+    // Pass real elapsed time into the engine clock; stepRace clamps physics
+    // independently so slow renders cannot stretch the start countdown or lap clock.
     stepRace(delta);
 
     // -------------------------------------------------------------- audio
     // Same telemetry the HUD polls, so the engine note and the tach always
     // agree. Ramped to silence while paused; nothing is scheduled per frame.
-    updateAudio(delta, raceDrive.active && racePhase() !== "paused");
+    updateAudio(frameDelta, raceDrive.active && racePhase() !== "paused");
 
     // ------------------------------------------------------------- camera
     const phase = racePhase();
@@ -702,7 +714,7 @@ export const RaceDirector = memo(function RaceDirector({
     } else {
       // Mounted views are bolted on, so they stiffen to keep the horizon still.
       const follow = raceSession.camMode === 0 ? CAM.follow : 26;
-      const blend = 1 - Math.exp(-follow * Math.min(delta, 0.05) * (phase === "racing" ? 1 : 1.6));
+      const blend = 1 - Math.exp(-follow * frameDelta * (phase === "racing" ? 1 : 1.6));
       camera.position.lerp(camGoal, blend);
     }
 

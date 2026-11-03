@@ -294,7 +294,7 @@ export function gearForSpeed(speedKph: number) {
 
 function startingGridIndex(row = 0) {
   const clearanceSamples = Math.max(1, Math.round(START_GRID_CLEARANCE / SEGMENT_LENGTH));
-  const rowSamples = Math.round((row * START_GRID_ROW_SPACING) / SEGMENT_LENGTH);
+  const rowSamples = Math.ceil((row * START_GRID_ROW_SPACING) / SEGMENT_LENGTH);
   return (SAMPLE_COUNT - clearanceSamples - rowSamples + SAMPLE_COUNT) % SAMPLE_COUNT;
 }
 
@@ -986,7 +986,10 @@ function computePosition() {
 
 /** Advances the race. Call once per frame from <RaceDirector/>. */
 export function stepRace(rawDelta: number) {
-  const dt = MathUtils.clamp(rawDelta, 0, 0.05);
+  // Wall elapsed time keeps countdown and race-clock displays honest when a
+  // slow frame hits the physics clamp. Vehicle integration remains bounded.
+  const wallDt = Number.isFinite(rawDelta) ? Math.max(0, rawDelta) : 0;
+  const dt = MathUtils.clamp(wallDt, 0, 0.05);
   const phase = race.phase;
   if (phase === "idle") return;
 
@@ -1001,7 +1004,7 @@ export function stepRace(rawDelta: number) {
   }
 
   if (phase === "countdown") {
-    race.countdownTimer += dt;
+    race.countdownTimer += wallDt;
     const value = Math.max(0, Math.ceil(5 - race.countdownTimer - 1e-6));
     if (value !== race.countdown) {
       race.countdown = value;
@@ -1030,8 +1033,8 @@ export function stepRace(rawDelta: number) {
   }
 
   if (phase === "racing") {
-    race.lapTime += dt;
-    race.totalTime += dt;
+    race.lapTime += wallDt;
+    race.totalTime += wallDt;
   }
 
   race.accumulator += dt;

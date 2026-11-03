@@ -265,6 +265,7 @@ export const VehicleModel = React.memo(
     showHotspotPins: U,
     bodyGlowOn = false,
     interiorLightsOn = false,
+    raceMode = false,
   }) => {
     const p = React.useMemo(() => makeStudioTextures(), []),
       G = React.useRef({
@@ -992,7 +993,7 @@ export const VehicleModel = React.memo(
               : 9.5
             : 0;
       }
-      if (JA) {
+      if (JA && !raceMode) {
         markShadowsDirty();
         BA.invalidate();
       }
