@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:showroom": "node scripts/check-showroom.mjs",
+    "check:multiplayer": "node scripts/check-multiplayer.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

@@ -16,6 +16,9 @@ import { loadVehicleAsset } from "@/lib/gltf";
 import { ENVIRONMENTS, RACE_DIFFICULTIES, RACE_MAPS, lockRaceConditions, raceSession, setEnvironment, setRaceDifficulty, setRaceLightsEnabled } from "@/three/raceSession";
 import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
+import { RaceMode } from "@/components/RaceMode";
+import { UserProfileBadge } from "@/components/UserProfileBadge";
+import { OnlineRaceCountdown } from "@/components/OnlineRaceCountdown";
 import { CityHud } from "@/components/CityHud";
 import { MainMenu } from "@/components/MainMenu";
 import { LoadingScreen } from "@/components/LoadingScreen";
@@ -25,6 +28,21 @@ import { CityDriveDirector } from "@/three/CityDriveDirector";
 import { GarageCarDisplays } from "@/three/GarageCarDisplays";
 import { OpenCityWorld } from "@/three/CityWorld";
 import { stopCityDrive } from "@/three/cityDrive";
+import { MultiplayerRacePlayers } from "@/three/MultiplayerRacePlayers";
+import { setRaceGridSlot } from "@/three/raceEngine";
+import {
+  createRaceRoom,
+  disconnectRaceRoom,
+  getMultiplayerSnapshot,
+  joinRaceRoom,
+  setLocalReady,
+  startOnlineRace,
+  subscribeMultiplayerEvents,
+  subscribeMultiplayerState,
+  updateLobbySettings,
+  updateLocalPlayer,
+} from "@/lib/multiplayer";
+import { loadPlayerProfile, savePlayerProfile } from "@/lib/playerProfile";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit, warmRaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
@@ -58,6 +76,7 @@ import {
   Moon,
   MousePointerClick,
   Palette,
+  Plus,
   Power,
   Sun,
   RotateCw,
@@ -82,6 +101,11 @@ const CANVAS_GL = {
   toneMappingExposure: 1.08,
   powerPreference: "high-performance",
 };
+const MULTIPLAYER_WS_URL = import.meta.env.VITE_MULTIPLAYER_WS_URL?.trim() || "";
+const MULTIPLAYER_ENVIRONMENTS = ENVIRONMENTS.map((environment, index) => ({
+  ...environment,
+  subtitle: ["Clear skies · full daylight", "Night run · vehicle lamps on", "Wet asphalt · rain and fog"][index],
+}));
 
 export function App() {
   const [Q, A] = React.useState("sf90"),
@@ -148,6 +172,12 @@ export function App() {
     [garageLightsOn, setGarageLightsOn] = React.useState(true),
     [neonLightsOn, setNeonLightsOn] = React.useState(false),
     [garageMusicOn, setGarageMusicOn] = React.useState(false);
+  const [playerProfile, setPlayerProfile] = React.useState(loadPlayerProfile);
+  const [raceModeType, setRaceModeType] = React.useState<"single" | "online">("single");
+  // Parent-owned room snapshot survives RaceMode tab changes; RaceMode only renders this state.
+  const [multiplayerSnapshot, setMultiplayerSnapshot] = React.useState(getMultiplayerSnapshot());
+  const [pendingOnlineStart, setPendingOnlineStart] = React.useState(null);
+  const [createSettingsRequest, setCreateSettingsRequest] = React.useState(0);
   const [liftStartRequested, setLiftStartRequested] = React.useState(false);
   const [mainMenuOpen, setMainMenuOpen] = React.useState(true);
   const [pauseMenuOpen, setPauseMenuOpen] = React.useState(false);
@@ -173,6 +203,57 @@ export function App() {
     },
     [],
   );
+  React.useEffect(() => subscribeMultiplayerState(setMultiplayerSnapshot), []);
+  React.useEffect(() => {
+    if (multiplayerSnapshot.connected) updateLocalPlayer(playerProfile, Q);
+  }, [multiplayerSnapshot.connected, playerProfile, Q]);
+  React.useEffect(() => {
+    const settings = multiplayerSnapshot.settings;
+    if (!settings || multiplayerSnapshot.isHost) return;
+    setRaceSetupMap(settings.mapId);
+    setRaceSetupEnvironment(settings.environment);
+    setRaceSetupDifficulty("normal");
+  }, [multiplayerSnapshot.settings?.mapId, multiplayerSnapshot.settings?.environment, multiplayerSnapshot.isHost]);
+  const saveProfile = React.useCallback((nextProfile) => {
+    const saved = savePlayerProfile(nextProfile);
+    setPlayerProfile(saved);
+    updateLocalPlayer(saved, Q);
+  }, [Q]);
+  const chooseRaceMode = React.useCallback((mode) => {
+    // Keep an established lobby connected while the player browses the other mode;
+    // returning to Online Multiplayer should restore this same room.
+    setRaceModeType(mode);
+  }, []);
+  const createOnlineRoom = React.useCallback((settings) => {
+    setRaceModeType("online");
+    setRaceSetupMap(settings.mapId);
+    setRaceSetupEnvironment(settings.environment);
+    setRaceSetupDifficulty("normal");
+    try {
+      const roomCode = createRaceRoom(playerProfile, Q, MULTIPLAYER_WS_URL, { ...settings, playerIds: [] });
+      const createdRoom = getMultiplayerSnapshot();
+      setMultiplayerSnapshot(createdRoom);
+      return Boolean(roomCode && createdRoom.roomCode === roomCode && createdRoom.isHost);
+    } catch {
+      return false;
+    }
+  }, [playerProfile, Q]);
+  const joinOnlineRoom = React.useCallback((code) => {
+    setRaceModeType("online");
+    joinRaceRoom(code, playerProfile, Q, MULTIPLAYER_WS_URL);
+  }, [playerProfile, Q]);
+  const editOnlineRoomSettings = React.useCallback((settings) => {
+    const updated = { ...settings, playerIds: multiplayerSnapshot.settings?.playerIds ?? [] };
+    if (!updateLobbySettings(updated)) return;
+    setRaceSetupMap(settings.mapId);
+    setRaceSetupEnvironment(settings.environment);
+    setRaceSetupDifficulty("normal");
+  }, [multiplayerSnapshot.settings?.playerIds]);
+  const toggleOnlineReady = React.useCallback(() => {
+    const local = multiplayerSnapshot.players.find((player) => player.id === multiplayerSnapshot.localPlayerId);
+    setLocalReady(!local?.ready);
+    void unlockAudioFromGesture();
+  }, [multiplayerSnapshot.players, multiplayerSnapshot.localPlayerId]);
   React.useEffect(() => {
     try {
       window.localStorage.setItem("maranello-graphics-quality", graphicsQuality);
@@ -496,14 +577,23 @@ export function App() {
     raceBodyGlowRef.current = false;
     setRaceBodyGlowOn(false);
   }, []);
-  const beginRace = React.useCallback(() => {
-    if (!raceSetupReady || !I || o || openingGate || cityMode || cityPreparing) return;
+  const beginRace = React.useCallback((roomStart = null) => {
+    const mapId = roomStart?.mapId ?? raceSetupMap;
+    const environment = roomStart?.environment ?? raceSetupEnvironment;
+    const difficulty = roomStart?.fromRoom ? "normal" : raceSetupDifficulty;
+    if ((!raceSetupReady && !roomStart?.fromRoom) || !I || o || openingGate || cityMode || cityPreparing) return;
+    if (roomStart?.fromRoom) {
+      setRaceSetupMap(mapId);
+      setRaceSetupEnvironment(environment);
+      setRaceSetupDifficulty(difficulty);
+    }
     setDriveReady(false);
     setDriveAlignmentReady(false);
-    selectRaceTrack(raceSetupMap);
-    setEnvironment(raceSetupEnvironment);
-    setRaceDifficulty(raceSetupDifficulty);
-    const automaticLights = raceSetupEnvironment !== 0;
+    setRaceGridSlot(roomStart?.fromRoom ? roomStart.gridSlot : null);
+    selectRaceTrack(mapId);
+    setEnvironment(environment);
+    setRaceDifficulty(difficulty);
+    const automaticLights = environment !== 0;
     raceLightsRef.current = automaticLights;
     setRaceLightsOn(automaticLights);
     setRaceLightsEnabled(automaticLights);
@@ -535,6 +625,40 @@ export function App() {
       setRaceMode(true);
     }, 1350);
   }, [I, o, openingGate, raceSetupMap, raceSetupEnvironment, raceSetupDifficulty, raceSetupReady, cityMode, cityPreparing]);
+  const launchOnlineRace = React.useCallback(() => {
+    const players = multiplayerSnapshot.players;
+    if (!multiplayerSnapshot.connected || !multiplayerSnapshot.isHost || players.length < 2 || players.some((player) => !player.ready)) return;
+    const currentSettings = multiplayerSnapshot.settings ?? {
+      mapId: raceSetupMap,
+      environment: raceSetupEnvironment,
+      playerIds: [],
+    };
+    const settings = { ...currentSettings, playerIds: players.map((player) => player.id) };
+    const countdownDelayMs = 1_500;
+    const countdownStartAt = Date.now() + countdownDelayMs;
+    void unlockAudioFromGesture();
+    if (startOnlineRace(settings, countdownDelayMs)) setPendingOnlineStart({ settings, countdownStartAt });
+  }, [multiplayerSnapshot, raceSetupMap, raceSetupEnvironment]);
+  React.useEffect(() => subscribeMultiplayerEvents((event) => {
+    if (event.type !== "start" || raceModeType !== "online" || !event.settings) return;
+    setPendingOnlineStart({
+      settings: event.settings,
+      countdownStartAt: Date.now() + (event.countdownDelayMs ?? 1_500),
+    });
+  }), [raceModeType]);
+  React.useEffect(() => {
+    if (!pendingOnlineStart) return;
+    const startTrackTransition = () => {
+      const { settings } = pendingOnlineStart;
+      const gridSlot = Math.max(0, settings.playerIds.indexOf(multiplayerSnapshot.localPlayerId));
+      setPendingOnlineStart(null);
+      try { warmRaceCircuit(settings.mapId); } catch { /* RaceCircuit builds on mount if warmup fails. */ }
+      beginRace({ ...settings, fromRoom: true, gridSlot });
+    };
+    const finishAt = pendingOnlineStart.countdownStartAt + 3900;
+    const timer = window.setTimeout(startTrackTransition, Math.max(0, finishAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [pendingOnlineStart, multiplayerSnapshot.localPlayerId, beginRace]);
   const exitRace = React.useCallback(() => {
     setDriveReady(false);
     setDriveAlignmentReady(false);
@@ -556,6 +680,9 @@ export function App() {
       window.clearTimeout(raceTransitionTimer.current);
       raceTransitionTimer.current = null;
     }
+    setRaceGridSlot(null);
+    disconnectRaceRoom();
+    setRaceModeType("single");
     setRaceMode(!1);
     setRaceLoading(false);
     setRaceCinematic(false);
@@ -699,6 +826,14 @@ export function App() {
     setPauseMenuOpen(false);
   }, []);
   const pendingCar = pendingCarId ? getCarById(pendingCarId) : null;
+  const onlineStartAvailable = multiplayerSnapshot.connected && multiplayerSnapshot.isHost && multiplayerSnapshot.players.length >= 2 && multiplayerSnapshot.players.every((player) => player.ready);
+  const onlineLobbyMessage = !multiplayerSnapshot.roomCode
+    ? "Create or join a room to continue."
+    : multiplayerSnapshot.players.length < 2
+      ? "Waiting for another racer to join."
+      : !multiplayerSnapshot.players.every((player) => player.ready)
+        ? "Waiting for every racer to ready up."
+        : multiplayerSnapshot.isHost ? "All racers ready. Start the room when you are set." : "All racers ready. Waiting for the host to start.";
   return (
     <div
       className="relative w-screen h-screen overflow-hidden bg-[#060709] select-none"
@@ -736,6 +871,7 @@ export function App() {
           <>
             <RaceCircuit />
             <RaceOpponents />
+            {raceModeType === "online" && <MultiplayerRacePlayers />}
             <RaceSceneReady onReady={onRaceSceneReady} />
             <RaceSunlight />
             {!raceLoading && <RaceDirector onCinematicComplete={onRaceCinematicComplete} />}
@@ -901,7 +1037,7 @@ export function App() {
                   disabled={o || !I || openingGate || cityMode || cityPreparing}
                   aria-label="Choose a race"
                   className="flex h-9 items-center gap-1.5 rounded-lg border border-[#DC1A22]/60 bg-[#DC1A22]/20 px-2.5 text-white transition-colors hover:bg-[#DC1A22]/35 disabled:opacity-50 sm:px-3"
-                  title="Choose a circuit, weather and difficulty before starting"
+                  title="Choose a circuit and weather before starting"
                 >
                   <Flag className="h-3.5 w-3.5 text-[#F87171]" />
                   <span className="font-mono-tech text-[9px] font-semibold uppercase tracking-wider">{openingGate ? "Opening…" : "Race"}</span>
@@ -975,6 +1111,7 @@ export function App() {
             </nav>
 
             <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+              <UserProfileBadge profile={playerProfile} onSave={saveProfile} />
               <details
                 className="relative"
                 onKeyDown={(event) => {
@@ -1293,6 +1430,23 @@ export function App() {
             </div>
 
             <div className="space-y-7 px-5 py-5 sm:px-7 sm:py-6">
+              <RaceMode
+                mode={raceModeType}
+                onModeChange={chooseRaceMode}
+                room={multiplayerSnapshot}
+                cars={CARS.map(({ id, brand, model, shortTitle, accentHex }) => ({ id, brand, model, shortTitle, accentHex }))}
+                maps={RACE_MAPS}
+                environments={MULTIPLAYER_ENVIRONMENTS}
+                initialSettings={{ mapId: raceSetupMap, environment: raceSetupEnvironment }}
+                createSettingsRequest={createSettingsRequest}
+                selectedCarId={Q}
+                onCarChange={A}
+                onCreateRoom={createOnlineRoom}
+                onJoinRoom={joinOnlineRoom}
+                onUpdateSettings={editOnlineRoomSettings}
+                onToggleReady={toggleOnlineReady}
+              />
+              {!(raceModeType === "online" && multiplayerSnapshot.roomCode) && <>
               <section aria-labelledby="race-map-heading">
                 <div className="mb-3 flex items-end justify-between gap-3">
                   <div>
@@ -1376,7 +1530,7 @@ export function App() {
                 </div>
               </section>
 
-              <section aria-labelledby="race-difficulty-heading">
+              {raceModeType !== "online" && <section aria-labelledby="race-difficulty-heading">
                 <div className="mb-3">
                   <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">03 · Rival pace</div>
                   <h3 id="race-difficulty-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose difficulty</h3>
@@ -1403,12 +1557,13 @@ export function App() {
                     );
                   })}
                 </div>
-              </section>
+              </section>}
+              </>}
             </div>
 
             <div className="flex flex-col-reverse gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
               <span className="font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">
-                {raceSetupReady ? "Circuit, Porsche and Bugatti are ready." : "Preparing circuit and opponent cars…"}
+                {raceModeType === "online" ? onlineLobbyMessage : raceSetupReady ? "Circuit, Porsche and Bugatti are ready." : "Preparing circuit and opponent cars…"}
               </span>
               <div className="flex items-center justify-end gap-2">
                 <button
@@ -1416,12 +1571,22 @@ export function App() {
                   onClick={() => setRaceSetupOpen(false)}
                   className="atelier-pill rounded-xl px-4 py-2.5 font-mono-tech text-[10px] uppercase tracking-wider text-zinc-300 hover:text-white cursor-pointer"
                 >Cancel</button>
-                <button
-                  type="button"
-                  onClick={beginRace}
-                  disabled={!raceSetupReady || o || !I || openingGate || cityMode || cityPreparing}
-                  className="flex items-center gap-2 rounded-xl border border-[#DC1A22]/70 bg-[#DC1A22] px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] disabled:opacity-50 cursor-pointer"
-                ><Flag className="h-3.5 w-3.5" />{raceSetupReady ? "Start Race" : "Preparing…"}</button>
+                {raceModeType === "online" && !multiplayerSnapshot.roomCode ? (
+                  <button
+                    type="button"
+                    onClick={() => setCreateSettingsRequest((request) => request + 1)}
+                    className="flex items-center gap-2 rounded-xl border border-sky-300/45 bg-sky-300/15 px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.16)] transition-colors hover:bg-sky-300/25 cursor-pointer"
+                  ><Plus className="h-3.5 w-3.5" /> Create Room</button>
+                ) : raceModeType === "online" && !multiplayerSnapshot.isHost ? (
+                  <span className="font-mono-tech text-[9px] uppercase tracking-wider text-sky-200/70">Waiting for Room Leader</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={raceModeType === "online" ? launchOnlineRace : () => beginRace()}
+                    disabled={!raceSetupReady || o || !I || openingGate || cityMode || cityPreparing || (raceModeType === "online" && !onlineStartAvailable)}
+                    className="flex items-center gap-2 rounded-xl border border-[#DC1A22]/70 bg-[#DC1A22] px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-[0_0_24px_rgba(220,26,34,0.24)] transition-colors hover:bg-[#B9151C] disabled:opacity-50 cursor-pointer"
+                  ><Flag className="h-3.5 w-3.5" />{!raceSetupReady ? "Preparing…" : "Start Race"}</button>
+                )}
               </div>
             </div>
           </section>
@@ -1431,6 +1596,7 @@ export function App() {
       )}
         </>
       )}
+      <OnlineRaceCountdown startAt={pendingOnlineStart?.countdownStartAt ?? null} />
       <MainMenu
         open={mainMenuOpen}
         musicOn={garageMusicOn}

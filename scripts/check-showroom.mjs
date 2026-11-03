@@ -393,7 +393,7 @@ assert.match(appSource, /overflow-x-auto no-scrollbar[\s\S]*CAMERA_PRESETS\.map\
 assert.match(catalogSource, /id: "cockpit",[\s\S]*?position: \[-0\.346, 1\.3, 0\.85\]/, "Cockpit view must pull back behind the steering wheel");
 assert.match(appSource, /\[HA, lg\] = React\.useState\(0\)/, "The steering and front wheels must start centered");
 assert.match(appSource, /showHotspotPins=\{Wg && !zg && !G\.interior && !raceMode && !cityMode\}/, "Inspection pins must remain available in the remaining camera views");
-assert.match(appSource, /Choose a circuit, weather and difficulty before starting/, "Race should open the circuit, weather and difficulty setup first");
+assert.match(appSource, /Choose a circuit and weather before starting/, "Race should open the circuit and weather setup first");
 assert.match(appSource, /max-h-\[min\(76vh,36rem\)\] w-\[min\(22rem,calc\(100vw_-_1rem\)\)\]/, "The controls popover must use a viewport-safe width and height on narrow screens");
 assert.match(appSource, /Studio sections[\s\S]*sm:hidden[\s\S]*Garage gate[\s\S]*aria-label="Hide interface for cinema mode"/, "Mobile toolbar overflow must keep studio navigation and the gate action available in Controls");
 const originalTrackLength = raceTrackModule.TRACK_LENGTH;
@@ -513,7 +513,7 @@ assert.match(raceHudSource, /getCarById\(playerCarId\)[\s\S]*RACE_OPPONENT_CARS\
 assert.match(appSource, /<RaceHud[\s\S]*playerCarId=\{Q\}/, "The race HUD must identify the player's selected supercar");
 assert.match(raceSessionSource, /RACE_DIFFICULTIES = \[[\s\S]*id: "easy"[\s\S]*id: "normal"[\s\S]*id: "hard"[\s\S]*difficulty: "normal"[\s\S]*setRaceDifficulty\(difficulty: RaceDifficulty\)/, "Race setup must provide Easy, Normal, and Hard difficulty choices with Normal as the default");
 assert.match(appSource, /race-difficulty-heading[\s\S]*RACE_DIFFICULTIES\.map[\s\S]*aria-pressed=\{selected\}/, "The race setup must expose selectable, accessible difficulty choices");
-assert.match(appSource, /selectRaceTrack\(raceSetupMap\)[\s\S]*setEnvironment\(raceSetupEnvironment\)[\s\S]*setRaceDifficulty\(raceSetupDifficulty\)[\s\S]*lockRaceConditions\(true\)/, "Selected difficulty must be applied before the race locks its setup");
+assert.match(appSource, /selectRaceTrack\(mapId\)[\s\S]*setEnvironment\(environment\)[\s\S]*setRaceDifficulty\(difficulty\)[\s\S]*lockRaceConditions\(true\)/, "Selected or host-synchronized race settings must be applied before locking the setup");
 assert.match(raceEngineSource, /AI_DIFFICULTY_TUNING = \{[\s\S]*easy: \{ topSpeed: 0\.82[\s\S]*normal: \{ topSpeed: 1[\s\S]*hard: \{ topSpeed: 1\.08[\s\S]*const tuning = AI_DIFFICULTY_TUNING\[raceSession\.difficulty\][\s\S]*tuning\.cornering[\s\S]*tuning\.catchUp[\s\S]*tuning\.acceleration/, "Difficulty must change rival speed, cornering, catch-up and acceleration");
 assert.match(raceCircuitSource, /const RAIN_COUNT = 700[\s\S]*new BufferAttribute\(rainPositions, 3\)\.setUsage\(DynamicDrawUsage\)/, "Rain particles must stay lightweight for race performance");
 assert.match(raceCircuitSource, /const LIGHT_POOL = 2/, "Street-light pooling must limit per-fragment lighting work");
@@ -548,8 +548,8 @@ assert.doesNotMatch(raceHudSource, /Weather ·|ENVIRONMENTS|setEnvironment|race-
 assert.match(raceHudSource, /onToggleLights[\s\S]*?aria-pressed=\{lightsOn\}/, "The race HUD must expose an accessible manual headlight switch");
 assert.match(raceHudSource, /onToggleBodyGlow[\s\S]*?aria-pressed=\{bodyGlowOn\}/, "The race HUD must expose a separate body-glow switch");
 assert.doesNotMatch(raceHudSource, /onToggleInteriorLights|interiorLightsOn|Cabin ambience/, "The race HUD must not include a cabin-light control");
-assert.match(appSource, /const automaticLights = raceSetupEnvironment !== 0/, "Night and Rain/Fog races must start with the vehicle lights on");
-assert.match(appSource, /const automaticLights = raceSetupEnvironment !== 0[\s\S]*raceLightsRef\.current = automaticLights[\s\S]*raceBodyGlowRef\.current = automaticLights[\s\S]*setRaceBodyGlowOn\(automaticLights\)/, "Daytime races must not switch on headlights or cinematic underglow automatically");
+assert.match(appSource, /const automaticLights = environment !== 0/, "Night and Rain/Fog races must start with the vehicle lights on, including synchronized online starts");
+assert.match(appSource, /const automaticLights = environment !== 0[\s\S]*raceLightsRef\.current = automaticLights[\s\S]*raceBodyGlowRef\.current = automaticLights[\s\S]*setRaceBodyGlowOn\(automaticLights\)/, "Daytime races must not switch on headlights or cinematic underglow automatically");
 assert.match(appSource, /event\.code === "KeyL"[\s\S]*?event\.code === "KeyB"/, "Race lighting toggles must retain L and B keyboard shortcuts");
 assert.doesNotMatch(appSource, /KeyI|raceInteriorLights/, "The removed cabin light must not leave a dead keyboard toggle");
 assert.match(appSource, /headlightsOn=\{cityMode \? cityHeadlightsOn : raceMode \? raceLightsOn : Tg\}/, "Race lights must not change showroom headlight behavior");
@@ -650,6 +650,23 @@ const rearGridSample = Math.round(raceEngineModule.raceAi.startIndex[1]) % raceT
 const rowSpacingSamples = (frontGridSample - rearGridSample + raceTrackModule.SAMPLE_COUNT) % raceTrackModule.SAMPLE_COUNT;
 assert(rowSpacingSamples * raceTrackModule.SEGMENT_LENGTH > 6 && rowSpacingSamples * raceTrackModule.SEGMENT_LENGTH < 9, "The third car must sit one realistic grid row behind");
 assert(Math.abs(raceEngineModule.raceAi.lateral[1] - 1.65) < 0.01, "The third car must return to the left-hand grid column after the player on the right");
+assert.match(raceEngineSource, /export function setRaceGridSlot\(slot: number \| null\)[\s\S]*multiplayerGridSlot[\s\S]*const multiplayerRow = multiplayerGridSlot === null \? 0 : 2 \+ Math\.floor\(multiplayerGridSlot \/ 2\)/, "Online player slots must deterministically fill rows behind the AI grid");
+const offlineStart = [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z];
+raceEngineModule.setRaceGridSlot(0);
+raceEngineModule.resetVehicle();
+const onlineSlot0 = [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z];
+raceEngineModule.setRaceGridSlot(1);
+raceEngineModule.resetVehicle();
+const onlineSlot1 = [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z];
+raceEngineModule.setRaceGridSlot(2);
+raceEngineModule.resetVehicle();
+const onlineSlot2 = [raceEngineModule.raceDrive.x, raceEngineModule.raceDrive.z];
+const distance2d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+assert(distance2d(offlineStart, onlineSlot0) > 11 && distance2d(offlineStart, onlineSlot0) < 15, "Online human grid should stage behind both AI rows");
+assert(distance2d(onlineSlot0, onlineSlot1) > 3 && distance2d(onlineSlot0, onlineSlot1) < 4, "Adjacent online racers should start in opposite road lanes");
+assert(distance2d(onlineSlot0, onlineSlot2) > 5.5 && distance2d(onlineSlot0, onlineSlot2) < 7.5, "Online grid rows should remain evenly spaced");
+raceEngineModule.setRaceGridSlot(null);
+raceEngineModule.resetVehicle();
 assert(raceEngineModule.raceTelemetry.progress < 0.001, "The grid offset must not make the HUD start partway around the lap");
 const startSignals = [];
 const unsubscribeStartSignals = raceEngineModule.subscribeRace((event) => {

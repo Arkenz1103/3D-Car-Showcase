@@ -209,6 +209,7 @@ const START_GRID_CLEARANCE = 7.5;
 const START_GRID_ROW_SPACING = 6.4;
 const PLAYER_GRID_LATERAL = -1.65;
 const AI_GRID_LATERAL = 1.65;
+let multiplayerGridSlot: number | null = null;
 const PLAYER_AI_CONTACT_LATCH = new Uint8Array(AI_COUNT);
 let OPPONENT_CONTACT_LATCH = 0;
 const CONTACT = { normalX: 0, normalZ: 0, penetration: 0 };
@@ -298,18 +299,27 @@ function startingGridIndex(row = 0) {
   return (SAMPLE_COUNT - clearanceSamples - rowSamples + SAMPLE_COUNT) % SAMPLE_COUNT;
 }
 
+/** Assigns a deterministic human grid slot behind the two AI rows in online races. */
+export function setRaceGridSlot(slot: number | null) {
+  multiplayerGridSlot = Number.isInteger(slot) ? Math.max(0, Math.min(11, slot as number)) : null;
+}
+
 /** Stages the player behind the start stripe with a fully charged turbo. */
 export function resetVehicle() {
-  const gridIndex = startingGridIndex();
+  const multiplayerRow = multiplayerGridSlot === null ? 0 : 2 + Math.floor(multiplayerGridSlot / 2);
+  const playerLane = multiplayerGridSlot === null
+    ? PLAYER_GRID_LATERAL
+    : multiplayerGridSlot % 2 === 0 ? PLAYER_GRID_LATERAL : AI_GRID_LATERAL;
+  const gridIndex = startingGridIndex(multiplayerRow);
   const gridOffset = gridIndex * 7;
   const tx = samples[gridOffset + 3];
   const tz = samples[gridOffset + 5];
   const horizontal = Math.hypot(tx, tz) || 1;
   const leftX = tz / horizontal;
   const leftZ = -tx / horizontal;
-  vehicle.x = samples[gridOffset] + leftX * PLAYER_GRID_LATERAL;
+  vehicle.x = samples[gridOffset] + leftX * playerLane;
   vehicle.y = roadHeightAt(gridIndex, 0);
-  vehicle.z = samples[gridOffset + 2] + leftZ * PLAYER_GRID_LATERAL;
+  vehicle.z = samples[gridOffset + 2] + leftZ * playerLane;
   vehicle.heading = headingAt(gridIndex, 0);
   vehicle.velX = 0;
   vehicle.velZ = 0;
