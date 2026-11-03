@@ -42,6 +42,7 @@ import { LiftStatus } from "@/ui/LiftStatus";
 import { Canvas } from "@react-three/fiber";
 import {
   Box,
+  Building2,
   ChevronsUp,
   CircleAlert,
   CloudRain,
@@ -55,7 +56,6 @@ import {
   Map,
   Maximize2,
   Moon,
-  Mountain,
   MousePointerClick,
   Palette,
   Power,
@@ -135,7 +135,7 @@ export function App() {
     [driveReady, setDriveReady] = React.useState(false),
     [cityGateReady, setCityGateReady] = React.useState(false),
     [citySceneReady, setCitySceneReady] = React.useState(false),
-    [cityHeadlightsOn, setCityHeadlightsOn] = React.useState(true),
+    [cityHeadlightsOn, setCityHeadlightsOn] = React.useState(false),
     [raceLightsOn, setRaceLightsOn] = React.useState(false),
     [raceBodyGlowOn, setRaceBodyGlowOn] = React.useState(false),
     [raceSetupOpen, setRaceSetupOpen] = React.useState(false),
@@ -449,7 +449,10 @@ export function App() {
     W(false);
     n(null);
     mg(false);
-    setCityHeadlightsOn(true);
+    // This free-drive scene is daytime: keep all exterior car lighting off
+    // when entering, while leaving the HUD toggle available for manual override.
+    setCityHeadlightsOn(false);
+    setNeonLightsOn(false);
     setDriveReady(false);
     setCityMode(true);
   }, [driveReady, garageGateOpen, openingGate, cityGateReady, citySceneReady, cityMode]);
@@ -504,10 +507,10 @@ export function App() {
     raceLightsRef.current = automaticLights;
     setRaceLightsOn(automaticLights);
     setRaceLightsEnabled(automaticLights);
-    // Switch on the paint-matched underglow for the cinematic left-side pass;
-    // it is restored to the normal off state when the countdown begins.
-    raceBodyGlowRef.current = true;
-    setRaceBodyGlowOn(true);
+    // Keep the cinematic underglow in sync with the selected time of day:
+    // daylight stays unlit; night/rain can use the accent glow until countdown.
+    raceBodyGlowRef.current = automaticLights;
+    setRaceBodyGlowOn(automaticLights);
     lockRaceConditions(true);
     setRaceSetupOpen(false);
     setRaceSceneReady(false);
@@ -744,7 +747,7 @@ export function App() {
             identity transform, so switching modes re-parents without remounting
             the GLB, its shader programs or its textures. */}
         {I && (
-          <RaceVehicleRig>
+          <RaceVehicleRig raceMode={raceMode}>
             <VehicleModel
               asset={I}
               selectedComponent={raceMode ? null : V}
@@ -767,6 +770,7 @@ export function App() {
               powerMode={WA}
               bodyGlowOn={raceMode ? raceBodyGlowOn : neonLightsOn}
               interiorLightsOn={!raceMode && !cityMode && neonLightsOn}
+              raceMode={raceMode}
               showHotspotPins={Wg && !zg && !G.interior && !raceMode && !cityMode}
             />
           </RaceVehicleRig>
@@ -825,6 +829,7 @@ export function App() {
       {raceMode && !raceLoading && !raceCinematic && (
         <RaceHud
           onExit={exitRace}
+          playerCarId={Q}
           lightsOn={raceLightsOn}
           bodyGlowOn={raceBodyGlowOn}
           onToggleLights={toggleRaceLights}
@@ -1298,19 +1303,19 @@ export function App() {
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   {RACE_MAPS.map((map, index) => {
-                    const Icon = index === 0 ? Map : index === 1 ? Waves : Mountain;
+                    const Icon = index === 0 ? Map : index === 1 ? Waves : Building2;
                     const selected = raceSetupMap === map.id;
                     const landscape = index === 0
                       ? "linear-gradient(135deg, rgba(220,26,34,.45), rgba(13,16,24,.35) 58%, rgba(245,197,24,.16))"
                       : index === 1
                         ? "linear-gradient(135deg, rgba(30,142,185,.45), rgba(13,16,24,.35) 58%, rgba(50,200,170,.18))"
-                        : "linear-gradient(135deg, rgba(112,117,160,.46), rgba(13,16,24,.34) 58%, rgba(56,189,248,.18))";
+                        : "linear-gradient(135deg, rgba(126,91,45,.42), rgba(13,16,24,.35) 58%, rgba(56,189,248,.18))";
                     const routeShape = index === 0
-                      ? "M32 25 C54 11 87 17 109 19 C136 21 168 21 184 37 C199 52 179 69 158 70 C136 71 134 84 109 77 C83 70 62 84 42 69 C22 55 17 37 32 25 Z"
+                      ? "M24 28 L164 28 Q188 28 190 47 L182 68 Q178 78 158 78 L137 78 L128 88 L80 88 L49 80 Q31 76 27 59 Z"
                       : index === 1
                         ? "M24 38 C39 18 59 19 77 27 C99 37 106 13 130 17 C153 20 157 41 180 34 C202 27 204 51 183 57 C161 63 174 81 151 79 C127 77 119 58 96 63 C71 69 64 84 43 72 C24 62 13 51 24 38 Z"
-                        : "M33 20 L68 15 L88 32 L115 17 L143 30 L169 22 L188 42 L169 55 L177 74 L144 81 L121 64 L94 79 L72 60 L45 72 L27 52 Z";
-                    const routeStart = index === 0 ? [32, 25] : index === 1 ? [24, 38] : [33, 20];
+                        : "M25 22 L173 22 L194 39 L192 63 L171 78 L132 78 L119 65 L79 65 L72 82 L40 78 L23 57 L39 43 Z";
+                    const routeStart = index === 0 ? [24, 28] : index === 1 ? [24, 38] : [25, 22];
                     return (
                       <button
                         key={map.id}

@@ -48,6 +48,7 @@ import { currentEnv, raceSession, subscribeRaceSession } from "./raceSession";
 import { markShadowsDirty } from "./sceneMotion";
 import {
   CHECKPOINT_COUNT,
+  SAMPLE_COUNT,
   TRACK_WIDTH,
   WALL_OFFSET,
   buildGuardRail,
@@ -55,6 +56,8 @@ import {
   buildRoadSurface,
   checkpointSample,
   sampleMatrix,
+  sampleX,
+  sampleZ,
   selectRaceTrack,
   slotsFor,
 } from "./raceTrack";
@@ -182,13 +185,31 @@ function circuitData() {
   for (let gate = 0; gate < CHECKPOINT_COUNT; gate++) banners.push(placementAt(checkpointSample(gate), 0, 6.05));
 
   // ----------------------------------------------------------------- skyline
-  const random = mulberry32(20260226);
+  // Keep one instanced city draw call, but give each destination its own
+  // deterministic skyline profile so the road scene reads as a distinct place.
+  const skylineByMap = {
+    manila: { seed: 197505, radius: 430, radiusSpread: 95, minHeight: 18, heightSpread: 48 },
+    tokyo: { seed: 200001, radius: 445, radiusSpread: 100, minHeight: 28, heightSpread: 64 },
+    "new-york": { seed: 188906, radius: 455, radiusSpread: 105, minHeight: 40, heightSpread: 60 },
+  };
+  const skyline = skylineByMap[mapId];
+  const random = mulberry32(skyline.seed);
   const cityCount = 54;
+  let trackOuterRadius = 0;
+  for (let sample = 0; sample < SAMPLE_COUNT; sample++) {
+    trackOuterRadius = Math.max(trackOuterRadius, Math.hypot(sampleX(sample), sampleZ(sample)));
+  }
+  const minimumCityRadius = trackOuterRadius + WALL_OFFSET + 60;
   const cityMatrices = fillMatrices(cityCount, (index, matrix) => {
     const angle = (index / cityCount) * Math.PI * 2 + random() * 0.08;
-    const radius = 265 + random() * 130;
-    const height = 24 + random() * 96;
-    matrix.makeScale(16 + random() * 26, height, 16 + random() * 26);
+    // Keep scenery well beyond the road and barriers so no building can block
+    // the driving line or intrude into the chase camera's foreground.
+    const radius = Math.max(minimumCityRadius, skyline.radius + random() * skyline.radiusSpread);
+    const height = skyline.minHeight + random() * skyline.heightSpread;
+    const width = 18 + random() * 18;
+    const depth = 18 + random() * 18;
+    matrix.makeRotationY(random() * Math.PI);
+    matrix.scale(scratchScale.set(width, height, depth));
     matrix.setPosition(Math.sin(angle) * radius, height / 2 - 3.2, Math.cos(angle) * radius);
   });
 
