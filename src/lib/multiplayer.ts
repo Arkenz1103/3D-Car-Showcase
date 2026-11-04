@@ -52,13 +52,32 @@ type RoomMessage = {
   pose?: RacePose;
   settings?: OnlineRaceSettings;
   countdownDelayMs?: number;
+  countdownStartAt?: number;
+  raceStartAt?: number;
+  hostNow?: number;
+};
+
+export type MultiplayerEvent = {
+  type: string;
+  settings?: OnlineRaceSettings;
+  countdownDelayMs?: number;
+  countdownStartAt?: number;
+  raceStartAt?: number;
 };
 
 const LOCAL_ROOM_PREFIX = "city-speedrunners-room-";
 const PEER_STALE_MS = 12_000;
 const HEARTBEAT_MS = 2_000;
 const POSE_SEND_INTERVAL_MS = 50;
-const getId = () => globalThis.crypto?.randomUUID?.() ?? `racer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+/** Generated once in this tab's JS context; never read from shared localStorage. */
+function getId() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) cryptoApi.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
+  return `racer-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
 const localPlayerId = getId();
 
 let snapshot: MultiplayerSnapshot = {
@@ -78,7 +97,11 @@ let socket: WebSocket | null = null;
 let heartbeatTimer = 0;
 let lastPoseSentAt = 0;
 const stateListeners = new Set<(state: MultiplayerSnapshot) => void>();
-const eventListeners = new Set<(event: { type: string; settings?: OnlineRaceSettings; countdownDelayMs?: number }) => void>();
+const eventListeners = new Set<(event: MultiplayerEvent) => void>();
+let raceStartParticipants = new Set<string>();
+let raceGridReadyPlayers = new Set<string>();
+let raceCountdownBroadcasted = false;
+let hostClockOffsetMs = 0;
 
 function notify() {
   for (const listener of stateListeners) listener(snapshot);
@@ -141,9 +164,29 @@ function roomRegistryKey(roomCode: string) {
 function markLocalRoomAlive() {
   if (!snapshot.roomCode || !snapshot.isHost || snapshot.transport !== "preview") return;
   try {
-    window.localStorage.setItem(roomRegistryKey(snapshot.roomCode), JSON.stringify({ hostId: localPlayerId, expiresAt: Date.now() + PEER_STALE_MS }));
+    const key = roomRegistryKey(snapshot.roomCode);
+    const current = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (current?.expiresAt > Date.now() && current.hostId !== localPlayerId) return;
+    window.localStorage.setItem(key, JSON.stringify({ hostId: localPlayerId, expiresAt: Date.now() + PEER_STALE_MS }));
   } catch {
     // The in-browser room still works if storage is unavailable.
+  }
+}
+
+function maybeBroadcastRaceCountdown() {
+  if (!snapshot.isHost || raceCountdownBroadcasted || raceStartParticipants.size === 0) return;
+  for (const playerId of [...raceStartParticipants]) {
+    if (playerId !== localPlayerId && !snapshot.players.some((player) => player.id === playerId)) {
+      raceStartParticipants.delete(playerId);
+    }
+  }
+  if (![...raceStartParticipants].every((playerId) => raceGridReadyPlayers.has(playerId))) return;
+  raceCountdownBroadcasted = true;
+  const hostNow = Date.now();
+  const raceStartAt = hostNow + 7000;
+  send("raceCountdown", { raceStartAt, hostNow });
+  for (const listener of eventListeners) {
+    listener({ type: "raceCountdown", settings: snapshot.settings ?? undefined, raceStartAt });
   }
 }
 
@@ -170,9 +213,17 @@ function receive(event: MessageEvent | RoomMessage) {
 
   switch (message.type) {
     case "join":
+      if (message.player && message.player.id === senderId) {
+        // Room membership is the only source of host privilege; joining peers are always guests.
+        upsertPlayer({ ...message.player, isHost: false });
+      }
+      sendPresence();
+      break;
     case "player":
-      if (message.player) upsertPlayer(message.player);
-      if (message.type === "join") sendPresence();
+      if (message.player && message.player.id === senderId) {
+        const knownHost = snapshot.players.some((player) => player.id === senderId && player.isHost);
+        upsertPlayer({ ...message.player, isHost: knownHost });
+      }
       break;
     case "presence":
       if (Array.isArray(message.players)) {
@@ -199,10 +250,46 @@ function receive(event: MessageEvent | RoomMessage) {
       break;
     case "leave":
       removePeer(senderId);
+      raceStartParticipants.delete(senderId);
+      raceGridReadyPlayers.delete(senderId);
+      maybeBroadcastRaceCountdown();
       break;
-    case "start":
-      for (const listener of eventListeners) listener({ type: "start", settings: message.settings, countdownDelayMs: message.countdownDelayMs });
+    case "start": {
+      const senderIsHost = snapshot.players.some((player) => player.id === senderId && player.isHost);
+      if (snapshot.isHost || !senderIsHost || !message.settings) break;
+      snapshot = { ...snapshot, settings: message.settings };
+      if (Number.isFinite(message.hostNow)) hostClockOffsetMs = Date.now() - message.hostNow!;
+      raceStartParticipants = new Set(message.settings.playerIds);
+      raceGridReadyPlayers = new Set();
+      raceCountdownBroadcasted = false;
+      notify();
+      for (const listener of eventListeners) listener({
+        type: "start",
+        settings: message.settings,
+        countdownDelayMs: message.countdownDelayMs,
+        countdownStartAt: Number.isFinite(message.countdownStartAt)
+          ? message.countdownStartAt! + hostClockOffsetMs
+          : undefined,
+      });
       break;
+    }
+    case "gridReady":
+      if (snapshot.isHost && raceStartParticipants.has(senderId)) {
+        raceGridReadyPlayers.add(senderId);
+        maybeBroadcastRaceCountdown();
+      }
+      break;
+    case "raceCountdown": {
+      const senderIsHost = snapshot.players.some((player) => player.id === senderId && player.isHost);
+      if (!snapshot.isHost && senderIsHost && Number.isFinite(message.raceStartAt)) {
+        for (const listener of eventListeners) listener({
+          type: "raceCountdown",
+          settings: snapshot.settings ?? undefined,
+          raceStartAt: message.raceStartAt! + hostClockOffsetMs,
+        });
+      }
+      break;
+    }
   }
 }
 
@@ -225,6 +312,10 @@ function disconnectTransport() {
   socket = null;
   localPlayer = null;
   lastPoseSentAt = 0;
+  raceStartParticipants = new Set();
+  raceGridReadyPlayers = new Set();
+  raceCountdownBroadcasted = false;
+  hostClockOffsetMs = 0;
   snapshot = {
     roomCode: null,
     localPlayerId,
@@ -344,7 +435,15 @@ export function generateRoomCode() {
 }
 
 export function createRaceRoom(profile: PlayerProfile, carId: string, websocketUrl = "", settings: OnlineRaceSettings | null = null) {
-  const roomCode = generateRoomCode();
+  let roomCode = generateRoomCode();
+  for (let attempt = 0; !websocketUrl && localRoomIsAvailable(roomCode) && attempt < 16; attempt++) {
+    roomCode = generateRoomCode();
+  }
+  if (!websocketUrl && localRoomIsAvailable(roomCode)) {
+    snapshot = { ...snapshot, error: "Could not reserve a unique local room code. Please try again." };
+    notify();
+    return "";
+  }
   connect({ roomCode, profile, carId, isHost: true, websocketUrl, settings });
   return roomCode;
 }
@@ -398,9 +497,27 @@ export function updateLobbySettings(settings: OnlineRaceSettings) {
   return true;
 }
 
-export function startOnlineRace(settings: OnlineRaceSettings, countdownDelayMs = 1_500) {
+export function startOnlineRace(
+  settings: OnlineRaceSettings,
+  countdownDelayMs = 1_500,
+  countdownStartAt = Date.now() + countdownDelayMs,
+) {
   if (!snapshot.connected || !snapshot.isHost) return false;
-  send("start", { settings, countdownDelayMs });
+  snapshot = { ...snapshot, settings };
+  raceStartParticipants = new Set(settings.playerIds);
+  raceGridReadyPlayers = new Set();
+  raceCountdownBroadcasted = false;
+  notify();
+  send("start", { settings, countdownDelayMs, countdownStartAt, hostNow: Date.now() });
+  return true;
+}
+
+/** Call once the local player has loaded the online race grid and camera. */
+export function markLocalRaceGridReady() {
+  if (!snapshot.connected || !localPlayer || !raceStartParticipants.has(localPlayerId)) return false;
+  raceGridReadyPlayers.add(localPlayerId);
+  send("gridReady");
+  maybeBroadcastRaceCountdown();
   return true;
 }
 
@@ -423,7 +540,7 @@ export function subscribeMultiplayerState(listener: (state: MultiplayerSnapshot)
   return () => stateListeners.delete(listener);
 }
 
-export function subscribeMultiplayerEvents(listener: (event: { type: string; settings?: OnlineRaceSettings; countdownDelayMs?: number }) => void) {
+export function subscribeMultiplayerEvents(listener: (event: MultiplayerEvent) => void) {
   eventListeners.add(listener);
   return () => eventListeners.delete(listener);
 }

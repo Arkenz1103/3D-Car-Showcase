@@ -29,7 +29,7 @@ import { GarageCarDisplays } from "@/three/GarageCarDisplays";
 import { OpenCityWorld } from "@/three/CityWorld";
 import { stopCityDrive } from "@/three/cityDrive";
 import { MultiplayerRacePlayers } from "@/three/MultiplayerRacePlayers";
-import { setRaceGridSlot } from "@/three/raceEngine";
+import { setRaceAiEnabled, setRaceGridSlot } from "@/three/raceEngine";
 import {
   createRaceRoom,
   disconnectRaceRoom,
@@ -242,6 +242,11 @@ export function App() {
     setRaceModeType("online");
     joinRaceRoom(code, playerProfile, Q, MULTIPLAYER_WS_URL);
   }, [playerProfile, Q]);
+  const leaveOnlineRoom = React.useCallback(() => {
+    disconnectRaceRoom();
+    setMultiplayerSnapshot(getMultiplayerSnapshot());
+    setRaceModeType("online");
+  }, []);
   const editOnlineRoomSettings = React.useCallback((settings) => {
     const updated = { ...settings, playerIds: multiplayerSnapshot.settings?.playerIds ?? [] };
     if (!updateLobbySettings(updated)) return;
@@ -590,6 +595,7 @@ export function App() {
     setDriveReady(false);
     setDriveAlignmentReady(false);
     setRaceGridSlot(roomStart?.fromRoom ? roomStart.gridSlot : null);
+    setRaceAiEnabled(!roomStart?.fromRoom, roomStart?.fromRoom ? roomStart.playerIds.length : 1);
     selectRaceTrack(mapId);
     setEnvironment(environment);
     setRaceDifficulty(difficulty);
@@ -633,17 +639,22 @@ export function App() {
       environment: raceSetupEnvironment,
       playerIds: [],
     };
-    const settings = { ...currentSettings, playerIds: players.map((player) => player.id) };
+    const playerIds = players.map((player) => player.id);
+    for (let index = playerIds.length - 1; index > 0; index--) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [playerIds[index], playerIds[swapIndex]] = [playerIds[swapIndex], playerIds[index]];
+    }
+    const settings = { ...currentSettings, playerIds };
     const countdownDelayMs = 1_500;
     const countdownStartAt = Date.now() + countdownDelayMs;
     void unlockAudioFromGesture();
-    if (startOnlineRace(settings, countdownDelayMs)) setPendingOnlineStart({ settings, countdownStartAt });
+    if (startOnlineRace(settings, countdownDelayMs, countdownStartAt)) setPendingOnlineStart({ settings, countdownStartAt });
   }, [multiplayerSnapshot, raceSetupMap, raceSetupEnvironment]);
   React.useEffect(() => subscribeMultiplayerEvents((event) => {
     if (event.type !== "start" || raceModeType !== "online" || !event.settings) return;
     setPendingOnlineStart({
       settings: event.settings,
-      countdownStartAt: Date.now() + (event.countdownDelayMs ?? 1_500),
+      countdownStartAt: event.countdownStartAt ?? Date.now() + (event.countdownDelayMs ?? 1_500),
     });
   }), [raceModeType]);
   React.useEffect(() => {
@@ -655,7 +666,7 @@ export function App() {
       try { warmRaceCircuit(settings.mapId); } catch { /* RaceCircuit builds on mount if warmup fails. */ }
       beginRace({ ...settings, fromRoom: true, gridSlot });
     };
-    const finishAt = pendingOnlineStart.countdownStartAt + 3900;
+    const finishAt = pendingOnlineStart.countdownStartAt + 3000;
     const timer = window.setTimeout(startTrackTransition, Math.max(0, finishAt - Date.now()));
     return () => window.clearTimeout(timer);
   }, [pendingOnlineStart, multiplayerSnapshot.localPlayerId, beginRace]);
@@ -681,6 +692,7 @@ export function App() {
       raceTransitionTimer.current = null;
     }
     setRaceGridSlot(null);
+    setRaceAiEnabled(true, 1);
     disconnectRaceRoom();
     setRaceModeType("single");
     setRaceMode(!1);
@@ -870,11 +882,11 @@ export function App() {
         {raceMode && (
           <>
             <RaceCircuit />
-            <RaceOpponents />
+            {raceModeType !== "online" && <RaceOpponents />}
             {raceModeType === "online" && <MultiplayerRacePlayers />}
             <RaceSceneReady onReady={onRaceSceneReady} />
             <RaceSunlight />
-            {!raceLoading && <RaceDirector onCinematicComplete={onRaceCinematicComplete} />}
+            {!raceLoading && <RaceDirector onlineMode={raceModeType === "online"} onCinematicComplete={onRaceCinematicComplete} />}
             {!raceLoading && <NitroPlumes />}
             {!raceLoading && <RaceCrashSparks />}
           </>
@@ -966,6 +978,11 @@ export function App() {
         <RaceHud
           onExit={exitRace}
           playerCarId={Q}
+          onlineMode={raceModeType === "online"}
+          localPlayerId={multiplayerSnapshot.localPlayerId}
+          multiplayerPlayers={(multiplayerSnapshot.settings?.playerIds ?? multiplayerSnapshot.players.map((player) => player.id))
+            .map((playerId) => multiplayerSnapshot.players.find((player) => player.id === playerId))
+            .filter(Boolean)}
           lightsOn={raceLightsOn}
           bodyGlowOn={raceBodyGlowOn}
           onToggleLights={toggleRaceLights}
@@ -1395,172 +1412,24 @@ export function App() {
         </footer>
       )}
       {raceSetupOpen && !raceMode && (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-[#030407]/82 backdrop-blur-md p-3 sm:p-6 pointer-events-auto"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setRaceSetupOpen(false);
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="race-setup-title"
-            className="atelier-panel w-full max-w-5xl max-h-[94vh] overflow-y-auto rounded-3xl border border-white/12 shadow-[0_30px_120px_rgba(0,0,0,0.7)]"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-5 sm:px-7">
-              <div>
-                <div className="flex items-center gap-2 font-mono-tech text-[10px] uppercase tracking-[0.24em] text-[#F5C518]">
-                  <Flag className="h-3.5 w-3.5" /> Race Control · Grid Setup
-                </div>
-                <h2 id="race-setup-title" className="mt-2 font-display text-2xl sm:text-3xl font-bold uppercase tracking-wide text-white">
-                  Choose your race
-                </h2>
-                <p className="mt-1 text-sm text-zinc-400">Pick a circuit and conditions before the garage gate opens.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setRaceSetupOpen(false)}
-                aria-label="Close race setup"
-                className="atelier-pill grid h-9 w-9 place-items-center rounded-full text-zinc-300 hover:text-white cursor-pointer"
-              >
-                <span className="text-xl leading-none">×</span>
-              </button>
-            </div>
-
-            <div className="space-y-7 px-5 py-5 sm:px-7 sm:py-6">
-              <RaceMode
-                mode={raceModeType}
-                onModeChange={chooseRaceMode}
-                room={multiplayerSnapshot}
-                cars={CARS.map(({ id, brand, model, shortTitle, accentHex }) => ({ id, brand, model, shortTitle, accentHex }))}
-                maps={RACE_MAPS}
-                environments={MULTIPLAYER_ENVIRONMENTS}
-                initialSettings={{ mapId: raceSetupMap, environment: raceSetupEnvironment }}
-                createSettingsRequest={createSettingsRequest}
-                selectedCarId={Q}
-                onCarChange={A}
-                onCreateRoom={createOnlineRoom}
-                onJoinRoom={joinOnlineRoom}
-                onUpdateSettings={editOnlineRoomSettings}
-                onToggleReady={toggleOnlineReady}
-              />
-              {!(raceModeType === "online" && multiplayerSnapshot.roomCode) && <>
-              <section aria-labelledby="race-map-heading">
-                <div className="mb-3 flex items-end justify-between gap-3">
-                  <div>
-                    <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">01 · Circuit</div>
-                    <h3 id="race-map-heading" className="mt-1 font-display text-lg font-semibold text-white">Select a map</h3>
-                  </div>
-                  <span className="font-mono-tech text-[10px] uppercase tracking-wider text-zinc-500">3 routes</span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  {RACE_MAPS.map((map, index) => {
-                    const Icon = index === 0 ? Map : index === 1 ? Waves : Building2;
-                    const selected = raceSetupMap === map.id;
-                    const landscape = index === 0
-                      ? "linear-gradient(135deg, rgba(220,26,34,.45), rgba(13,16,24,.35) 58%, rgba(245,197,24,.16))"
-                      : index === 1
-                        ? "linear-gradient(135deg, rgba(30,142,185,.45), rgba(13,16,24,.35) 58%, rgba(50,200,170,.18))"
-                        : "linear-gradient(135deg, rgba(126,91,45,.42), rgba(13,16,24,.35) 58%, rgba(56,189,248,.18))";
-                    const routeShape = index === 0
-                      ? "M24 28 L164 28 Q188 28 190 47 L182 68 Q178 78 158 78 L137 78 L128 88 L80 88 L49 80 Q31 76 27 59 Z"
-                      : index === 1
-                        ? "M24 38 C39 18 59 19 77 27 C99 37 106 13 130 17 C153 20 157 41 180 34 C202 27 204 51 183 57 C161 63 174 81 151 79 C127 77 119 58 96 63 C71 69 64 84 43 72 C24 62 13 51 24 38 Z"
-                        : "M25 22 L173 22 L194 39 L192 63 L171 78 L132 78 L119 65 L79 65 L72 82 L40 78 L23 57 L39 43 Z";
-                    const routeStart = index === 0 ? [24, 28] : index === 1 ? [24, 38] : [25, 22];
-                    return (
-                      <button
-                        key={map.id}
-                        type="button"
-                        onClick={() => setRaceSetupMap(map.id)}
-                        aria-pressed={selected}
-                        className={`overflow-hidden rounded-2xl border text-left transition-all cursor-pointer ${selected ? "border-[#F5C518] bg-[#F5C518]/[0.07] shadow-[0_0_26px_rgba(245,197,24,0.1)]" : "border-white/10 bg-black/25 hover:border-white/30"}`}
-                      >
-                        <div className="relative flex h-24 items-end justify-between overflow-hidden p-4" style={{ background: landscape }}>
-                          <svg className="absolute inset-0 h-full w-full opacity-75" viewBox="0 0 220 96" fill="none" aria-hidden="true">
-                            <path d={routeShape} stroke={selected ? "#F5C518" : "#FFFFFF"} strokeOpacity="0.82" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                            <circle cx={routeStart[0]} cy={routeStart[1]} r="3.5" fill={selected ? "#F5C518" : "#FFFFFF"} />
-                          </svg>
-                          <Icon className={`relative z-10 h-6 w-6 ${selected ? "text-[#F5C518]" : "text-white/80"}`} />
-                          <span className="relative rounded-full bg-black/45 px-2 py-1 font-mono-tech text-[9px] uppercase tracking-wider text-white/80">{map.region}</span>
-                        </div>
-                        <div className="p-4">
-                          <div className="font-display text-[15px] font-semibold text-white">{map.name}</div>
-                          <p className="mt-1.5 min-h-[2.5rem] text-xs leading-relaxed text-zinc-400">{map.description}</p>
-                          <div className={`mt-3 font-mono-tech text-[9px] uppercase tracking-[0.18em] ${selected ? "text-[#F5C518]" : "text-zinc-600"}`}>
-                            {selected ? "Selected circuit" : "Choose circuit"}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section aria-labelledby="race-weather-heading">
-                <div className="mb-3">
-                  <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">02 · Conditions</div>
-                  <h3 id="race-weather-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose time and weather</h3>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {ENVIRONMENTS.map((environment, index) => {
-                    const Icon = index === 0 ? Sun : index === 1 ? Moon : CloudRain;
-                    const selected = raceSetupEnvironment === index;
-                    const note = index === 0 ? "Clear skies · full daylight" : index === 1 ? "Night run · lamps on" : "Wet asphalt · rain and fog";
-                    return (
-                      <button
-                        key={environment.id}
-                        type="button"
-                        onClick={() => setRaceSetupEnvironment(index)}
-                        aria-pressed={selected}
-                        className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#38BDF8]/70 bg-[#38BDF8]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
-                      >
-                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${selected ? "bg-[#38BDF8]/15 text-[#7DD3FC]" : "bg-white/5 text-zinc-400"}`}>
-                          <Icon className="h-5 w-5" />
-                        </span>
-                        <span>
-                          <span className="block font-display text-sm font-semibold">{environment.label}</span>
-                          <span className="mt-0.5 block font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">{note}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-
-              {raceModeType !== "online" && <section aria-labelledby="race-difficulty-heading">
-                <div className="mb-3">
-                  <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">03 · Rival pace</div>
-                  <h3 id="race-difficulty-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose difficulty</h3>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {RACE_DIFFICULTIES.map((difficulty) => {
-                    const selected = raceSetupDifficulty === difficulty.id;
-                    return (
-                      <button
-                        key={difficulty.id}
-                        type="button"
-                        onClick={() => setRaceSetupDifficulty(difficulty.id)}
-                        aria-pressed={selected}
-                        className={`rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#DC1A22]/70 bg-[#DC1A22]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
-                      >
-                        <span className="flex items-center justify-between gap-2">
-                          <span className="font-display text-sm font-semibold">{difficulty.label}</span>
-                          <span className={`font-mono-tech text-[9px] uppercase tracking-wider ${selected ? "text-[#FCA5A5]" : "text-zinc-600"}`}>
-                            {selected ? "Selected" : "Select"}
-                          </span>
-                        </span>
-                        <span className="mt-1 block font-mono-tech text-[9px] leading-relaxed text-zinc-500">{difficulty.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>}
-              </>}
-            </div>
-
+        <RaceMode
+          mode={raceModeType}
+          onModeChange={chooseRaceMode}
+          room={multiplayerSnapshot}
+          cars={CARS.map(({ id, brand, model, shortTitle, accentHex }) => ({ id, brand, model, shortTitle, accentHex }))}
+          maps={RACE_MAPS}
+          environments={MULTIPLAYER_ENVIRONMENTS}
+          initialSettings={{ mapId: raceSetupMap, environment: raceSetupEnvironment }}
+          createSettingsRequest={createSettingsRequest}
+          selectedCarId={Q}
+          onCarChange={A}
+          onCreateRoom={createOnlineRoom}
+          onJoinRoom={joinOnlineRoom}
+          onUpdateSettings={editOnlineRoomSettings}
+          onToggleReady={toggleOnlineReady}
+          onLeaveRoom={leaveOnlineRoom}
+          onCloseSetup={() => setRaceSetupOpen(false)}
+          footer={
             <div className="flex flex-col-reverse gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
               <span className="font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">
                 {raceModeType === "online" ? onlineLobbyMessage : raceSetupReady ? "Circuit, Porsche and Bugatti are ready." : "Preparing circuit and opponent cars…"}
@@ -1589,8 +1458,122 @@ export function App() {
                 )}
               </div>
             </div>
-          </section>
-        </div>
+          }
+        >
+          {!(raceModeType === "online" && multiplayerSnapshot.roomCode) && <>
+            <section aria-labelledby="race-map-heading">
+              <div className="mb-3 flex items-end justify-between gap-3">
+                <div>
+                  <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">01 · Circuit</div>
+                  <h3 id="race-map-heading" className="mt-1 font-display text-lg font-semibold text-white">Select a map</h3>
+                </div>
+                <span className="font-mono-tech text-[10px] uppercase tracking-wider text-zinc-500">3 routes</span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {RACE_MAPS.map((map, index) => {
+                  const Icon = index === 0 ? Map : index === 1 ? Waves : Building2;
+                  const selected = raceSetupMap === map.id;
+                  const landscape = index === 0
+                    ? "linear-gradient(135deg, rgba(220,26,34,.45), rgba(13,16,24,.35) 58%, rgba(245,197,24,.16))"
+                    : index === 1
+                      ? "linear-gradient(135deg, rgba(30,142,185,.45), rgba(13,16,24,.35) 58%, rgba(50,200,170,.18))"
+                      : "linear-gradient(135deg, rgba(126,91,45,.42), rgba(13,16,24,.35) 58%, rgba(56,189,248,.18))";
+                  const routeShape = index === 0
+                    ? "M24 28 L164 28 Q188 28 190 47 L182 68 Q178 78 158 78 L137 78 L128 88 L80 88 L49 80 Q31 76 27 59 Z"
+                    : index === 1
+                      ? "M24 38 C39 18 59 19 77 27 C99 37 106 13 130 17 C153 20 157 41 180 34 C202 27 204 51 183 57 C161 63 174 81 151 79 C127 77 119 58 96 63 C71 69 64 84 43 72 C24 62 13 51 24 38 Z"
+                      : "M25 22 L173 22 L194 39 L192 63 L171 78 L132 78 L119 65 L79 65 L72 82 L40 78 L23 57 L39 43 Z";
+                  const routeStart = index === 0 ? [24, 28] : index === 1 ? [24, 38] : [25, 22];
+                  return (
+                    <button
+                      key={map.id}
+                      type="button"
+                      onClick={() => setRaceSetupMap(map.id)}
+                      aria-pressed={selected}
+                      className={`overflow-hidden rounded-2xl border text-left transition-all cursor-pointer ${selected ? "border-[#F5C518] bg-[#F5C518]/[0.07] shadow-[0_0_26px_rgba(245,197,24,0.1)]" : "border-white/10 bg-black/25 hover:border-white/30"}`}
+      >
+                      <div className="relative flex h-24 items-end justify-between overflow-hidden p-4" style={{ background: landscape }}>
+                        <svg className="absolute inset-0 h-full w-full opacity-75" viewBox="0 0 220 96" fill="none" aria-hidden="true">
+                          <path d={routeShape} stroke={selected ? "#F5C518" : "#FFFFFF"} strokeOpacity="0.82" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                          <circle cx={routeStart[0]} cy={routeStart[1]} r="3.5" fill={selected ? "#F5C518" : "#FFFFFF"} />
+                        </svg>
+                        <Icon className={`relative z-10 h-6 w-6 ${selected ? "text-[#F5C518]" : "text-white/80"}`} />
+                        <span className="relative rounded-full bg-black/45 px-2 py-1 font-mono-tech text-[9px] uppercase tracking-wider text-white/80">{map.region}</span>
+                      </div>
+                      <div className="p-4">
+                        <div className="font-display text-[15px] font-semibold text-white">{map.name}</div>
+                        <p className="mt-1.5 min-h-[2.5rem] text-xs leading-relaxed text-zinc-400">{map.description}</p>
+                        <div className={`mt-3 font-mono-tech text-[9px] uppercase tracking-[0.18em] ${selected ? "text-[#F5C518]" : "text-zinc-600"}`}>
+                          {selected ? "Selected circuit" : "Choose circuit"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section aria-labelledby="race-weather-heading">
+              <div className="mb-3">
+                <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">02 · Conditions</div>
+                <h3 id="race-weather-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose time and weather</h3>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {ENVIRONMENTS.map((environment, index) => {
+                  const Icon = index === 0 ? Sun : index === 1 ? Moon : CloudRain;
+                  const selected = raceSetupEnvironment === index;
+                  const note = index === 0 ? "Clear skies · full daylight" : index === 1 ? "Night run · lamps on" : "Wet asphalt · rain and fog";
+                  return (
+                    <button
+                      key={environment.id}
+                      type="button"
+                      onClick={() => setRaceSetupEnvironment(index)}
+                      aria-pressed={selected}
+                      className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#38BDF8]/70 bg-[#38BDF8]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
+      >
+                      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${selected ? "bg-[#38BDF8]/15 text-[#7DD3FC]" : "bg-white/5 text-zinc-400"}`}>
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <span>
+                        <span className="block font-display text-sm font-semibold">{environment.label}</span>
+                        <span className="mt-0.5 block font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500">{note}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {raceModeType !== "online" && <section aria-labelledby="race-difficulty-heading">
+              <div className="mb-3">
+                <div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">03 · Rival pace</div>
+                <h3 id="race-difficulty-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose difficulty</h3>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {RACE_DIFFICULTIES.map((difficulty) => {
+                  const selected = raceSetupDifficulty === difficulty.id;
+                  return (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      onClick={() => setRaceSetupDifficulty(difficulty.id)}
+                      aria-pressed={selected}
+                      className={`rounded-xl border px-4 py-3 text-left transition-all cursor-pointer ${selected ? "border-[#DC1A22]/70 bg-[#DC1A22]/[0.09] text-white" : "border-white/10 bg-black/20 text-zinc-300 hover:border-white/25"}`}
+      >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="font-display text-sm font-semibold">{difficulty.label}</span>
+                        <span className={`font-mono-tech text-[9px] uppercase tracking-wider ${selected ? "text-[#FCA5A5]" : "text-zinc-600"}`}>
+                          {selected ? "Selected" : "Select"}
+                        </span>
+                      </span>
+                      <span className="mt-1 block font-mono-tech text-[9px] leading-relaxed text-zinc-500">{difficulty.description}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>}
+          </>}
+        </RaceMode>
       )}
         </>
       )}
