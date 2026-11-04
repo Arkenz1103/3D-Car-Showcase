@@ -15,6 +15,7 @@ import { getCarById } from "@/data/catalog";
 import { RACE_OPPONENT_CARS } from "@/data/raceOpponentCars";
 import { SAMPLE_COUNT, sampleX, sampleZ } from "@/three/raceTrack";
 import { triggerCrashImpact } from "@/three/raceAudio";
+import { getMultiplayerSnapshot } from "@/lib/multiplayer";
 import {
   CAMERA_MODES,
   RACE_MAPS,
@@ -116,9 +117,15 @@ export function RaceHud({
   bodyGlowOn,
   onToggleLights,
   onToggleBodyGlow,
+  onlineMode = false,
+  multiplayerPlayers = [],
+  localPlayerId = "",
 }: {
   onExit: () => void;
   playerCarId: string;
+  onlineMode?: boolean;
+  multiplayerPlayers?: any[];
+  localPlayerId?: string;
   lightsOn: boolean;
   bodyGlowOn: boolean;
   onToggleLights: () => void;
@@ -164,6 +171,19 @@ export function RaceHud({
   const selectedMapName = RACE_MAPS.find((map) => map.id === session.mapId)?.name || "Race Circuit";
   const raceCars = React.useMemo(() => {
     const playerCar = getCarById(playerCarId);
+    if (onlineMode) {
+      return multiplayerPlayers.map((player, index) => {
+        const car = getCarById(player.carId);
+        return {
+          id: player.id,
+          tag: player.id === localPlayerId ? "YOU" : `P${index + 1}`,
+          brand: car.brand,
+          model: car.model,
+          year: car.year,
+          color: car.accentHex,
+        };
+      });
+    }
     return [
       { id: "player", tag: "YOU", brand: playerCar.brand, model: playerCar.model, year: playerCar.year, color: playerCar.accentHex },
       ...RACE_OPPONENT_CARS.slice(0, AI_COUNT).map((car, index) => ({
@@ -175,7 +195,7 @@ export function RaceHud({
         color: car.accentHex,
       })),
     ];
-  }, [playerCarId]);
+  }, [playerCarId, onlineMode, multiplayerPlayers, localPlayerId]);
 
   React.useEffect(
     () =>
@@ -287,13 +307,31 @@ export function RaceHud({
           const heading = (-raceDrive.heading * 180) / Math.PI;
           minimapPlayerRef.current.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
         }
-        for (let car = 0; car < AI_COUNT; car++) {
-          const marker = minimapOpponentRefs.current[car];
-          if (!marker) continue;
-          const x = minimap.offsetX + raceAi.x[car] * minimap.scale;
-          const y = minimap.offsetY + raceAi.z[car] * minimap.scale;
-          const heading = (-raceAi.heading[car] * 180) / Math.PI;
-          marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+        if (onlineMode) {
+          const currentPlayers = getMultiplayerSnapshot().players;
+          let markerIndex = 0;
+          for (const player of multiplayerPlayers) {
+            if (player.id === localPlayerId) continue;
+            const marker = minimapOpponentRefs.current[markerIndex++];
+            if (!marker) continue;
+            const currentPlayer = currentPlayers.find((candidate) => candidate.id === player.id);
+            const pose = currentPlayer?.pose;
+            marker.style.display = pose ? "" : "none";
+            if (!pose) continue;
+            const x = minimap.offsetX + pose.x * minimap.scale;
+            const y = minimap.offsetY + pose.z * minimap.scale;
+            const heading = (-pose.heading * 180) / Math.PI;
+            marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+          }
+        } else {
+          for (let car = 0; car < AI_COUNT; car++) {
+            const marker = minimapOpponentRefs.current[car];
+            if (!marker) continue;
+            const x = minimap.offsetX + raceAi.x[car] * minimap.scale;
+            const y = minimap.offsetY + raceAi.z[car] * minimap.scale;
+            const heading = (-raceAi.heading[car] * 180) / Math.PI;
+            marker.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${heading.toFixed(1)})`);
+          }
         }
         if (positionRef.current) positionRef.current.textContent = ordinal(t.position);
         if (progressRef.current) progressRef.current.style.transform = `scaleY(${Math.min(1, t.progress)})`;
@@ -422,17 +460,29 @@ export function RaceHud({
           <path d={minimap.path} fill="none" stroke="#94A3B8" strokeOpacity="0.78" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
           <path d={minimap.path} fill="none" stroke="#E2E8F0" strokeOpacity="0.7" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 3" />
           <circle cx={minimap.startX} cy={minimap.startY} r="3.2" fill="#F5C518" stroke="#111827" strokeWidth="1.3" />
-          {Array.from({ length: AI_COUNT }, (_, car) => (
-            <g
-              key={`opponent-${car}`}
-              ref={(node) => {
-                if (node) minimapOpponentRefs.current[car] = node;
-              }}
-              transform={`translate(${minimap.startX} ${minimap.startY})`}
-            >
-              <circle r="2.5" fill={car === 0 ? "#FB923C" : "#A3E635"} stroke="#111827" strokeWidth="1" />
-            </g>
-          ))}
+          {onlineMode
+            ? multiplayerPlayers.filter((player) => player.id !== localPlayerId).map((player, index) => (
+                <g
+                  key={player.id}
+                  ref={(node) => {
+                    if (node) minimapOpponentRefs.current[index] = node;
+                  }}
+                  transform={`translate(${minimap.startX} ${minimap.startY})`}
+                >
+                  <circle r="2.5" fill="#38BDF8" stroke="#111827" strokeWidth="1" />
+                </g>
+              ))
+            : Array.from({ length: AI_COUNT }, (_, car) => (
+                <g
+                  key={`opponent-${car}`}
+                  ref={(node) => {
+                    if (node) minimapOpponentRefs.current[car] = node;
+                  }}
+                  transform={`translate(${minimap.startX} ${minimap.startY})`}
+                >
+                  <circle r="2.5" fill={car === 0 ? "#FB923C" : "#A3E635"} stroke="#111827" strokeWidth="1" />
+                </g>
+              ))}
           <g
             ref={minimapPlayerRef}
             transform={`translate(${minimap.startX} ${minimap.startY})`}
@@ -698,13 +748,15 @@ export function RaceHud({
               >
                 Resume Race
               </button>
-              <button
-                type="button"
-                onClick={retry}
-                className="w-full rounded-xl bg-white/10 px-4 py-2.5 font-mono-tech text-[11px] uppercase tracking-[0.2em] text-zinc-200 hover:bg-white/16 cursor-pointer"
-              >
-                Restart
-              </button>
+              {!onlineMode && (
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="w-full rounded-xl bg-white/10 px-4 py-2.5 font-mono-tech text-[11px] uppercase tracking-[0.2em] text-zinc-200 hover:bg-white/16 cursor-pointer"
+                >
+                  Restart
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onExit}
@@ -759,13 +811,15 @@ export function RaceHud({
               ))}
             </div>
             <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                onClick={retry}
-                className="flex-1 rounded-xl bg-[#DC1A22] px-4 py-3 font-mono-tech text-[11px] uppercase tracking-[0.2em] text-white hover:bg-[#b9151c] cursor-pointer flex items-center justify-center gap-2"
-              >
-                <RotateCcw className="w-3.5 h-3.5" /> Race Again
-              </button>
+              {!onlineMode && (
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="flex-1 rounded-xl bg-[#DC1A22] px-4 py-3 font-mono-tech text-[11px] uppercase tracking-[0.2em] text-white hover:bg-[#b9151c] cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Race Again
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onExit}

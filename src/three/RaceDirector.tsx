@@ -11,6 +11,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { AdditiveBlending, BufferAttribute, BufferGeometry, DoubleSide, PlaneGeometry, Vector3 } from "three";
 import { makePlumeTexture } from "./raceAssets";
+import { markLocalRaceGridReady, subscribeMultiplayerEvents } from "@/lib/multiplayer";
 import {
   abortRace,
   activateTurbo,
@@ -362,14 +363,17 @@ export const RaceCrashSparks = memo(function RaceCrashSparks() {
  */
 export const RaceDirector = memo(function RaceDirector({
   onCinematicComplete,
+  onlineMode = false,
 }: {
   onCinematicComplete: () => void;
+  onlineMode?: boolean;
 }) {
   const camera = useThree((state) => state.camera);
   const invalidate = useThree((state) => state.invalidate);
   const clock = useRef(0);
   const cinematic = useRef(true);
   const countdownPending = useRef(false);
+  const onlineStartTimer = useRef<number | null>(null);
   const cinematicStartedAt = useRef(0);
   const settled = useRef(false);
   const frameGate = useRef({ last: 0, timer: 0 });
@@ -394,6 +398,18 @@ export const RaceDirector = memo(function RaceDirector({
     const stopCountdownAudio = subscribeRace((event) => {
       if (event.type === "countdown" && event.value > 0) playRaceCountdownTone(event.value);
       else if (event.type === "go") playRaceGoChime();
+    });
+    const stopMultiplayerEvents = subscribeMultiplayerEvents((event) => {
+      if (!onlineMode || event.type !== "raceCountdown" || !Number.isFinite(event.raceStartAt)) return;
+      if (onlineStartTimer.current !== null) window.clearTimeout(onlineStartTimer.current);
+      const countdownStartAt = event.raceStartAt - 5_000;
+      onlineStartTimer.current = window.setTimeout(() => {
+        onlineStartTimer.current = null;
+        countdownPending.current = false;
+        releaseKeys();
+        startRaceSequence(countdownStartAt);
+        onCinematicComplete();
+      }, Math.max(0, countdownStartAt - Date.now()));
     });
     prepareRaceGrid();
     cinematic.current = true;
@@ -423,6 +439,9 @@ export const RaceDirector = memo(function RaceDirector({
       cinematic.current = false;
       countdownPending.current = false;
       stopCountdownAudio();
+      stopMultiplayerEvents();
+      if (onlineStartTimer.current !== null) window.clearTimeout(onlineStartTimer.current);
+      onlineStartTimer.current = null;
       if (frameGate.current.timer) window.clearTimeout(frameGate.current.timer);
       frameGate.current.timer = 0;
       releaseKeys();
@@ -432,11 +451,14 @@ export const RaceDirector = memo(function RaceDirector({
       camera.fov = 40;
       camera.updateProjectionMatrix();
     };
-  }, [camera, invalidate, onCinematicComplete]);
+  }, [camera, invalidate, onCinematicComplete, onlineMode]);
 
   useLayoutEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (event.repeat || cinematic.current || countdownPending.current) return;
+      if (event.repeat || cinematic.current || countdownPending.current || racePhase() !== "racing") {
+        if (event.code === "Space" || event.code.startsWith("Arrow")) event.preventDefault();
+        return;
+      }
       switch (event.code) {
         case "KeyW":
         case "ArrowUp":
@@ -559,9 +581,9 @@ export const RaceDirector = memo(function RaceDirector({
       } else if (elapsed < 4.2) {
         // Angle 3: eagle-eye establishing shot, centered on the player and both
         // opponents so the complete starting formation is visible at once.
-        const gridCenterX = (raceDrive.x + raceAi.x[0] + raceAi.x[1]) / 3;
-        const gridCenterY = (raceDrive.y + raceAi.y[0] + raceAi.y[1]) / 3;
-        const gridCenterZ = (raceDrive.z + raceAi.z[0] + raceAi.z[1]) / 3;
+        const gridCenterX = onlineMode ? raceDrive.x : (raceDrive.x + raceAi.x[0] + raceAi.x[1]) / 3;
+        const gridCenterY = onlineMode ? raceDrive.y : (raceDrive.y + raceAi.y[0] + raceAi.y[1]) / 3;
+        const gridCenterZ = onlineMode ? raceDrive.z : (raceDrive.z + raceAi.z[0] + raceAi.z[1]) / 3;
         cameraX = gridCenterX - camForward.x * 7 + rightX * 7;
         cameraY = gridCenterY + 15;
         cameraZ = gridCenterZ - camForward.z * 7 + rightZ * 7;
@@ -606,7 +628,8 @@ export const RaceDirector = memo(function RaceDirector({
         // Finish the camera move first. Start the countdown/audio on the next
         // frame so no red light or gameplay HUD overlaps the cinematic shot.
         cinematic.current = false;
-        countdownPending.current = true;
+        countdownPending.current = !onlineMode;
+        if (onlineMode) markLocalRaceGridReady();
         clock.current = 0;
         frameGate.current.last = performance.now();
         settled.current = true;
@@ -633,11 +656,12 @@ export const RaceDirector = memo(function RaceDirector({
     const frameDelta = Math.min(Math.max(delta, 0), 0.05);
     clock.current += frameDelta;
 
-    // Analogue ramps: a tap is a tap, a hold is a hold.
-    raceInput.throttle = held.forward ? 1 : 0;
-    raceInput.brake = held.back ? 1 : 0;
-    raceInput.steer = (held.left ? 1 : 0) - (held.right ? 1 : 0);
-    raceInput.handbrake = held.drift || held.handbrake;
+    // Input stays clamped through both local and synchronized online lights.
+    const controlsUnlocked = racePhase() === "racing";
+    raceInput.throttle = controlsUnlocked && held.forward ? 1 : 0;
+    raceInput.brake = controlsUnlocked && held.back ? 1 : 0;
+    raceInput.steer = controlsUnlocked ? (held.left ? 1 : 0) - (held.right ? 1 : 0) : 0;
+    raceInput.handbrake = controlsUnlocked && (held.drift || held.handbrake);
 
     // Pass real elapsed time into the engine clock; stepRace clamps physics
     // independently so slow renders cannot stretch the start countdown or lap clock.

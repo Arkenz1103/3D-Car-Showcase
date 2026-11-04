@@ -210,6 +210,15 @@ const START_GRID_ROW_SPACING = 6.4;
 const PLAYER_GRID_LATERAL = -1.65;
 const AI_GRID_LATERAL = 1.65;
 let multiplayerGridSlot: number | null = null;
+let aiRivalsEnabled = true;
+export function setRaceAiEnabled(enabled: boolean, humanRacerCount = 1) {
+  aiRivalsEnabled = Boolean(enabled);
+  raceTelemetry.totalRacers = aiRivalsEnabled ? 1 + AI_COUNT : Math.max(1, Math.floor(humanRacerCount));
+  raceTelemetry.position = 1;
+}
+export function areRaceAiEnabled() {
+  return aiRivalsEnabled;
+}
 const PLAYER_AI_CONTACT_LATCH = new Uint8Array(AI_COUNT);
 let OPPONENT_CONTACT_LATCH = 0;
 const CONTACT = { normalX: 0, normalZ: 0, penetration: 0 };
@@ -258,6 +267,7 @@ const race = {
   finishers: 0,
   gridStartIndex: 0,
   gridLap: 0,
+  countdownStartAtMs: null as number | null,
 };
 
 const listeners = new Set<(event: RaceEvent) => void>();
@@ -299,14 +309,14 @@ function startingGridIndex(row = 0) {
   return (SAMPLE_COUNT - clearanceSamples - rowSamples + SAMPLE_COUNT) % SAMPLE_COUNT;
 }
 
-/** Assigns a deterministic human grid slot behind the two AI rows in online races. */
+/** Assigns a shared, host-selected human grid slot for online races. */
 export function setRaceGridSlot(slot: number | null) {
   multiplayerGridSlot = Number.isInteger(slot) ? Math.max(0, Math.min(11, slot as number)) : null;
 }
 
 /** Stages the player behind the start stripe with a fully charged turbo. */
 export function resetVehicle() {
-  const multiplayerRow = multiplayerGridSlot === null ? 0 : 2 + Math.floor(multiplayerGridSlot / 2);
+  const multiplayerRow = multiplayerGridSlot === null ? 0 : Math.floor(multiplayerGridSlot / 2);
   const playerLane = multiplayerGridSlot === null
     ? PLAYER_GRID_LATERAL
     : multiplayerGridSlot % 2 === 0 ? PLAYER_GRID_LATERAL : AI_GRID_LATERAL;
@@ -363,7 +373,7 @@ export function resetVehicle() {
   raceTelemetry.lap = 1;
   raceTelemetry.crashFx = 0;
   raceTelemetry.turboReady = true;
-  resetAi();
+  if (aiRivalsEnabled) resetAi();
   syncDrive();
 }
 
@@ -373,6 +383,7 @@ export function prepareRaceGrid() {
   race.phase = "idle";
   race.countdown = 5;
   race.countdownTimer = 0;
+  race.countdownStartAtMs = null;
   raceTelemetry.phase = "idle";
   raceTelemetry.countdown = 5;
   raceTelemetry.wrongWay = false;
@@ -381,17 +392,20 @@ export function prepareRaceGrid() {
 }
 
 /** Five-second start: red 5–3, yellow 2, green 1, then GO at T-0. */
-export function startRaceSequence() {
+export function startRaceSequence(countdownStartAtMs: number | null = null) {
   resetVehicle();
   race.phase = "countdown";
   race.countdown = 5;
-  race.countdownTimer = 0;
+  race.countdownStartAtMs = Number.isFinite(countdownStartAtMs) ? countdownStartAtMs : null;
+  race.countdownTimer = race.countdownStartAtMs === null
+    ? 0
+    : Math.max(0, (Date.now() - race.countdownStartAtMs) / 1000);
   raceTelemetry.phase = "countdown";
-  raceTelemetry.countdown = 5;
+  raceTelemetry.countdown = Math.max(0, Math.ceil(5 - race.countdownTimer - 1e-6));
   raceTelemetry.wrongWay = false;
   raceDrive.active = true;
   emit({ type: "phase", phase: "countdown" });
-  emit({ type: "countdown", value: 5 });
+  emit({ type: "countdown", value: raceTelemetry.countdown });
 }
 
 export function restartRace() {
@@ -987,6 +1001,10 @@ function computePosition() {
     race.phase === "finished"
       ? TOTAL_LAPS + 0.5
       : race.gridLap + relativeRaceIndex(vehicle.indexFloat) / SAMPLE_COUNT;
+  if (!aiRivalsEnabled) {
+    raceTelemetry.position = multiplayerGridSlot === null ? 1 : multiplayerGridSlot + 1;
+    return;
+  }
   let ahead = 0;
   for (let car = 0; car < AI_COUNT; car++) {
     if (raceAi.progress[car] > mine) ahead += 1;
@@ -1014,7 +1032,8 @@ export function stepRace(rawDelta: number) {
   }
 
   if (phase === "countdown") {
-    race.countdownTimer += wallDt;
+    if (race.countdownStartAtMs === null) race.countdownTimer += wallDt;
+    else race.countdownTimer = Math.max(0, (Date.now() - race.countdownStartAtMs) / 1000);
     const value = Math.max(0, Math.ceil(5 - race.countdownTimer - 1e-6));
     if (value !== race.countdown) {
       race.countdown = value;
@@ -1061,7 +1080,7 @@ export function stepRace(rawDelta: number) {
 
   // Opponents only move while the lap clock is running; then syncDrive()
   // re-ranks the field so the HUD can print 1st..3rd.
-  if (phase === "racing") {
+  if (phase === "racing" && aiRivalsEnabled) {
     stepAi(dt);
     resolvePlayerOpponentContacts();
     resolveOpponentContact();
