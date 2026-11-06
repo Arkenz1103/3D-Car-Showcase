@@ -8,6 +8,8 @@ const profileSource = await readFile(new URL("../src/lib/playerProfile.ts", impo
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const remoteCarsSource = await readFile(new URL("../src/three/MultiplayerRacePlayers.tsx", import.meta.url), "utf8");
 const raceModeSource = await readFile(new URL("../src/components/RaceMode.tsx", import.meta.url), "utf8");
+const publicRoomDirectorySource = await readFile(new URL("../src/lib/publicRoomDirectory.ts", import.meta.url), "utf8");
+const publicRoomMigration = await readFile(new URL("../supabase/migrations/20261106011422_public_room_directory.sql", import.meta.url), "utf8");
 const vehicleThumbnailSource = await readFile(new URL("../src/lib/vehicleThumbnails.ts", import.meta.url), "utf8");
 const countdownSource = await readFile(new URL("../src/components/OnlineRaceCountdown.tsx", import.meta.url), "utf8");
 const raceEngineSource = await readFile(new URL("../src/three/raceEngine.ts", import.meta.url), "utf8");
@@ -16,6 +18,7 @@ const raceHudSource = await readFile(new URL("../src/components/RaceHud.tsx", im
 const javascript = ts.transpile(source, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 });
 const profileJavascript = ts.transpile(profileSource, { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 });
 const channels = new Map();
+const realtimeChannels = new Map();
 const storage = new Map();
 let idSequence = 0;
 let clock = 50;
@@ -38,7 +41,41 @@ class MockBroadcastChannel {
   }
 }
 
-function createClient() {
+class MockRealtimeChannel {
+  constructor(topic) {
+    this.topic = topic;
+    this.state = "closed";
+    this.listener = null;
+  }
+  on(type, filter, listener) {
+    assert.equal(type, "broadcast");
+    assert.equal(filter.event, "room-message");
+    this.listener = listener;
+    return this;
+  }
+  subscribe(callback) {
+    this.state = "joined";
+    if (!realtimeChannels.has(this.topic)) realtimeChannels.set(this.topic, new Set());
+    realtimeChannels.get(this.topic).add(this);
+    queueMicrotask(() => callback("SUBSCRIBED"));
+    return this;
+  }
+  send(message) {
+    for (const peer of realtimeChannels.get(this.topic) ?? []) {
+      if (peer !== this && peer.state === "joined") queueMicrotask(() => peer.listener?.(message.payload));
+    }
+    return Promise.resolve("ok");
+  }
+  unsubscribe() {
+    this.state = "closed";
+    realtimeChannels.get(this.topic)?.delete(this);
+    return Promise.resolve("ok");
+  }
+}
+
+const mockSupabase = { channel: (topic) => new MockRealtimeChannel(topic) };
+
+function createClient({ useSupabaseRealtime = false } = {}) {
   const module = { exports: {} };
   const context = {
     module,
@@ -66,7 +103,13 @@ function createClient() {
     Uint8Array,
     JSON,
     console,
-    require: (name) => { throw new Error(`Unexpected runtime import: ${name}`); },
+    require: (name) => {
+      if (name === "@/lib/supabase") return {
+        supabase: useSupabaseRealtime ? mockSupabase : null,
+        supabaseConfigured: useSupabaseRealtime,
+      };
+      throw new Error(`Unexpected runtime import: ${name}`);
+    },
   };
   vm.runInNewContext(javascript, context, { filename: "multiplayer.ts" });
   return module.exports;
@@ -81,10 +124,54 @@ assert.equal(code.length, 6, "Room codes should be six characters");
 assert.equal(host.getMultiplayerSnapshot().roomCode, code, "Creating a room should initialize its active room code");
 assert.equal(host.getMultiplayerSnapshot().isHost, true, "The creator should be initialized as room host");
 assert.equal(host.getMultiplayerSnapshot().players[0].isHost, true, "The creator roster entry should have host privileges");
-const advertisedLobbies = await host.discoverPublicLobbies();
-assert.equal(advertisedLobbies.length, 1, "Active local rooms should appear in the public directory");
-assert.equal(advertisedLobbies[0].roomCode, code, "Lobby directory should publish the active room code");
-assert.equal(advertisedLobbies[0].hostName, "Host Racer", "Lobby directory should publish the room host name");
+assert.match(source, /supabase\.channel\(`city-speedrunners-room:\$\{roomCode\}`[\s\S]*\.on\("broadcast", \{ event: "room-message" \}/, "Room messages should use a shared Supabase Realtime Broadcast channel by default");
+assert.match(source, /realtimeChannel\.send\(\{ type: "broadcast", event: "room-message", payload: message \}\)/, "Room state and vehicle poses should be broadcast to remote room peers");
+const realtimeHost = createClient({ useSupabaseRealtime: true });
+const realtimeGuest = createClient({ useSupabaseRealtime: true });
+const realtimeCode = realtimeHost.createRaceRoom(profile("Realtime Host"), "sf90", "", initialSettings, "RTM123");
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(realtimeHost.getMultiplayerSnapshot().transport, "supabase", "Configured Supabase should replace the local-only transport");
+assert.equal(realtimeGuest.joinRaceRoom(realtimeCode, profile("Mobile Driver"), "gt3"), true, "A remote client should connect to the shared Realtime room topic");
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(realtimeHost.getMultiplayerSnapshot().players.length, 2, "Supabase Realtime should add a remote driver to the host roster");
+assert.equal(realtimeGuest.getMultiplayerSnapshot().players.length, 2, "Supabase Realtime should send host presence to a joining driver");
+realtimeGuest.setLocalReady(true);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(realtimeHost.getMultiplayerSnapshot().players.find((player) => player.id === realtimeGuest.getMultiplayerSnapshot().localPlayerId)?.ready, true, "Readiness should sync across Supabase Realtime peers");
+const realtimePose = { x: 4, y: 1, z: 8, pitch: 0, heading: 0.7, roll: 0, speed: 15 };
+realtimeGuest.publishRacePose(realtimePose);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.deepEqual(JSON.parse(JSON.stringify(realtimeHost.getMultiplayerSnapshot().players.find((player) => player.id === realtimeGuest.getMultiplayerSnapshot().localPlayerId)?.pose)), realtimePose, "Vehicle pose telemetry should sync across Supabase Realtime peers");
+let realtimeStart = null;
+let realtimeHostCountdown = null;
+let realtimeGuestCountdown = null;
+realtimeGuest.subscribeMultiplayerEvents((event) => { if (event.type === "start") realtimeStart = event; });
+realtimeHost.subscribeMultiplayerEvents((event) => { if (event.type === "raceCountdown") realtimeHostCountdown = event; });
+realtimeGuest.subscribeMultiplayerEvents((event) => { if (event.type === "raceCountdown") realtimeGuestCountdown = event; });
+const realtimeGrid = {
+  mapId: "tokyo",
+  environment: 1,
+  playerIds: [realtimeHost.getMultiplayerSnapshot().localPlayerId, realtimeGuest.getMultiplayerSnapshot().localPlayerId],
+};
+assert.equal(realtimeHost.startOnlineRace(realtimeGrid, 1500), true, "The host should start a race over Supabase Realtime");
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(realtimeStart?.type, "start", "The synchronized race start should reach the remote device");
+realtimeHost.markLocalRaceGridReady();
+await new Promise((resolve) => setTimeout(resolve, 0));
+realtimeGuest.markLocalRaceGridReady();
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(realtimeHostCountdown?.type, "raceCountdown", "The host should synchronize the green-light countdown across devices");
+assert.equal(realtimeGuestCountdown?.type, "raceCountdown", "Remote drivers should receive the same countdown signal");
+realtimeHost.disconnectRaceRoom();
+realtimeGuest.disconnectRaceRoom();
+
+assert.match(publicRoomDirectorySource, /\.from\("rooms"\)[\s\S]*\.select\("room_code,host_id,host_name,map,weather,player_count,max_players,expires_at,is_public"\)[\s\S]*\.eq\("is_public", true\)[\s\S]*\.gt\("expires_at"/, "Lobby discovery should query active public rows from the shared Supabase table");
+assert.match(publicRoomDirectorySource, /rpc\("create_public_room"[\s\S]*p_room_code[\s\S]*p_host_name[\s\S]*p_map[\s\S]*p_weather[\s\S]*p_host_token/, "Room creation should publish its code, host, track and weather to the backend");
+assert.match(publicRoomDirectorySource, /rpc\("join_room_by_code"[\s\S]*p_room_code[\s\S]*p_player_id/, "Joining should reserve the active room through a backend lookup rather than local storage");
+assert.match(publicRoomMigration, /create table if not exists public\.rooms[\s\S]*room_code text primary key[\s\S]*host_name text[\s\S]*map text[\s\S]*weather smallint[\s\S]*player_count integer[\s\S]*expires_at timestamptz/, "The shared lobby table should include the required room directory fields and expiry");
+assert.match(publicRoomMigration, /alter table public\.rooms enable row level security[\s\S]*create policy "Active public rooms are visible to everyone"/, "Public room reads should be protected by an active-room RLS policy");
+assert.match(publicRoomMigration, /function public\.join_room_by_code[\s\S]*r\.room_code = normalized_code and r\.expires_at > now\(\)[\s\S]*not already_joined and current_count >= room\.max_players/, "Invite-code joins should validate live database state and enforce room capacity");
+assert.doesNotMatch(source, /window\.localStorage\.(?:getItem|setItem|removeItem)\([^\n]*(?:room|lobby)/i, "Cross-device room discovery must not rely on browser-local room records");
 assert.match(source, /function publishHostLobby\([\s\S]*?type: "publishLobby" \| "unpublishLobby"[\s\S]*?isPublic: true[\s\S]*?socket\.send\(JSON\.stringify\(\{ type, roomCode: snapshot\.roomCode, from: localPlayerId, lobby \}\)\)/, "WebSocket hosts should publish complete public-lobby metadata to the relay");
 assert.match(source, /socket\.onopen = \(\) => \{[\s\S]*?publishHostLobby\(\);/, "A WebSocket host should publish its listing after connecting");
 assert.match(source, /heartbeatTimer = window\.setInterval\(\(\) => \{[\s\S]*?publishHostLobby\(\);[\s\S]*?\}, HEARTBEAT_MS\)/, "The host should renew its listing with the heartbeat");
@@ -92,10 +179,7 @@ assert.match(source, /publishHostLobby\("unpublishLobby"\);[\s\S]*?socket\.close
 const hostId = host.getMultiplayerSnapshot().localPlayerId;
 const guestId = guest.getMultiplayerSnapshot().localPlayerId;
 assert.notEqual(hostId, guestId, "Each tab must generate a unique in-memory player ID");
-const roomStorageKey = `city-speedrunners-room-${code}`;
-const hostRoomRecord = storage.get(roomStorageKey);
-assert.equal(guest.joinRaceRoom(code.toLowerCase(), profile("Guest Racer"), "gt3"), true, "Preview guest should join the live room");
-assert.equal(storage.get(roomStorageKey), hostRoomRecord, "A joining tab must not overwrite the active host room registry entry");
+assert.equal(guest.joinRaceRoom(code.toLowerCase(), profile("Guest Racer"), "gt3"), true, "After the backend confirms the code, preview transport should join the live room");
 assert.equal(guest.getMultiplayerSnapshot().isHost, false, "A player entering an existing code must be explicitly assigned the guest role");
 assert.equal(guest.getMultiplayerSnapshot().players.find((player) => player.id === guestId)?.isHost, false, "The guest's local roster profile must not claim host privileges");
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -154,7 +238,7 @@ assert.ok(Math.abs(hostRaceCountdown.raceStartAt - guestRaceCountdown.raceStartA
 
 host.disconnectRaceRoom();
 await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal((await host.discoverPublicLobbies()).length, 0, "A closed host room should disappear from the public directory");
+assert.match(publicRoomDirectorySource, /rpc\("leave_public_room"[\s\S]*roomCode[\s\S]*playerId[\s\S]*hostToken/, "Leaving a lobby should update the centralized room registry");
 assert.equal(guest.getMultiplayerSnapshot().players.length, 1, "Leaving should remove the peer from the lobby");
 guest.disconnectRaceRoom();
 
@@ -198,8 +282,10 @@ assert.match(appSource, /raceModeType !== "online" && <section aria-labelledby="
 assert.match(raceModeSource, /CREATE CUSTOM LOBBY/, "The online tab should provide a prominent custom room action");
 assert.match(raceModeSource, /Refresh[\s\S]*Room Code \/ Host Name[\s\S]*Description \/ Track Settings[\s\S]*Players[\s\S]*Map \/ Circuit[\s\S]*Region[\s\S]*Action/, "The public lobby directory should use the requested refreshable table columns");
 assert.match(raceModeSource, /Search lobbies by room code or host name[\s\S]*Find Private Lobby/, "The directory should support live search and invite-code joining");
-assert.match(raceModeSource, /setInterval\(\(\) => \{ void refreshPublicLobbies\(\); \}, 10_000\)/, "The lobby directory should auto-refresh on a ten-second poll");
-assert.match(appSource, /websocketUrl=\{MULTIPLAYER_WS_URL\}/, "The public lobby browser should receive the configured relay URL");
+assert.match(raceModeSource, /setInterval\(\(\) => \{ void refreshPublicLobbies\(\); \}, 5_000\)/, "The lobby directory should poll the backend every five seconds");
+assert.match(appSource, /await createPublicRoom\([\s\S]*hostName: playerProfile\.displayName[\s\S]*weather: settings\.environment[\s\S]*createRaceRoom\([\s\S]*published\.room\.roomCode/, "The app should publish the database row before opening the host lobby");
+assert.match(appSource, /await joinPublicRoom\(code, playerId\)[\s\S]*joinRaceRoom\(activeRoom\.roomCode/, "A room join must query and reserve the active backend room before connecting");
+assert.match(appSource, /heartbeatPublicRoom\([\s\S]*setInterval\(\(\) => \{ void heartbeat\(\); \}, 5_000\)/, "Active rooms should keep their server-side leases alive with five-second heartbeats");
 assert.match(raceModeSource, /VehicleThumbnail[\s\S]*Top speed[\s\S]*0–100[\s\S]*Handling[\s\S]*Select Car/, "Car selection should use visual cards and performance badges");
 assert.match(raceModeSource, /renderVehicleThumbnails[\s\S]*imageUrl=\{vehicleThumbnails\[car\.id\]\}/, "Online lobby cards should display the generated model snapshots");
 assert.doesNotMatch(raceModeSource, /function VehicleThumbnail[\s\S]*?<svg/, "Lobby car cards should no longer use hand-drawn side-profile vectors");
@@ -219,7 +305,7 @@ assert.match(raceModeSource, /CONFIRM & CREATE ROOM/, "The lobby review step sho
 assert.match(raceModeSource, /<PublicLobbyBrowser[\s\S]*?\{room\.roomCode \? \([\s\S]*?\) : \(/, "The public directory should remain mounted above the room lobby after a player joins or creates a room");
 assert.match(raceModeSource, /room\.roomCode \? "mt-4 space-y-4" : "mt-4 grid items-start gap-4 xl:grid-cols-\[[\s\S]*<PublicLobbyBrowser[\s\S]*CREATE CUSTOM LOBBY/, "The directory and create-lobby action should be presented side by side before room creation");
 assert.match(raceModeSource, /onClick=\{\(\) => openSettings\("create"\)\}/, "Create Custom Lobby should open the existing track and weather setup modal");
-assert.match(appSource, /const roomCode = createRaceRoom[\s\S]*const createdRoom = getMultiplayerSnapshot\(\)[\s\S]*setMultiplayerSnapshot\(createdRoom\)[\s\S]*createdRoom\.isHost/, "Confirming creation should generate a code, initialize the host snapshot, and transition into the lobby");
+assert.match(appSource, /const roomCode = createRaceRoom[\s\S]*const createdRoom = getMultiplayerSnapshot\(\)[\s\S]*createdRoom\.isHost[\s\S]*setMultiplayerSnapshot\(createdRoom\)/, "Confirming creation should initialize the multiplayer host after the server reservation");
 assert.match(countdownSource, /THE RACE IS STARTING IN 3\.\.\. 2\.\.\. 1\.\.\./, "The online countdown should display the explicit race-start message");
 assert.match(countdownSource, /activeNumber = elapsed < 1000 \? 3 : elapsed < 2000 \? 2 : 1/, "Each player should animate the same 3-2-1 message sequence");
 assert.doesNotMatch(countdownSource, /GO!|All racers · launch/, "The countdown should end at 1 and transition directly into the race");
@@ -238,4 +324,4 @@ assert.match(raceHudSource, /if \(onlineMode\)[\s\S]*multiplayerPlayers\.map/, "
 assert.match(remoteCarsSource, /publishRacePose\([\s\S]*heading: raceDrive\.heading[\s\S]*speed: raceDrive\.speed/, "Race scene should publish position, rotation and speed telemetry");
 assert.match(remoteCarsSource, /<Html[\s\S]*player\.username/, "Remote cars should have floating username tags");
 
-console.log("PASS: guest profiles, preview room create/join, readiness, pose telemetry, synchronized race start, remote tags, and leave handling.");
+console.log("PASS: preview and Supabase Realtime room messaging, remote readiness/pose/race countdown, shared room registry, and existing multiplayer regressions.");

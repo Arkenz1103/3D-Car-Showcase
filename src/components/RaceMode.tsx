@@ -1,7 +1,8 @@
 import { Check, Clipboard, CloudSun, Cpu, Crown, Flag, Globe2, Link2, LockKeyhole, LogOut, MapPin, Pencil, Plus, Radio, RefreshCw, Search, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { discoverPublicLobbies, type MultiplayerSnapshot, type OnlineRaceSettings, type PublicLobby, type RoomPlayer } from "@/lib/multiplayer";
+import { type MultiplayerSnapshot, type OnlineRaceSettings, type PublicLobby, type RoomPlayer } from "@/lib/multiplayer";
+import { discoverPublicLobbies } from "@/lib/publicRoomDirectory";
 import { renderVehicleThumbnails } from "@/lib/vehicleThumbnails";
 
 type MatchSelection = Pick<OnlineRaceSettings, "mapId" | "environment">;
@@ -12,15 +13,14 @@ type RaceModeProps = {
   children?: ReactNode;
   footer?: ReactNode;
   room: MultiplayerSnapshot;
-  websocketUrl?: string;
   cars: { id: string; brand: string; model: string; shortTitle: string; accentHex: string }[];
   maps: { id: string; name: string; region: string; description: string }[];
   environments: { id: string; label: string; subtitle: string }[];
   initialSettings: MatchSelection;
   selectedCarId: string;
   onCarChange: (carId: string) => void;
-  onCreateRoom: (settings: MatchSelection) => boolean;
-  onJoinRoom: (code: string) => void;
+  onCreateRoom: (settings: MatchSelection) => Promise<boolean>;
+  onJoinRoom: (code: string) => Promise<boolean>;
   onUpdateSettings: (settings: MatchSelection) => void;
   onToggleReady: () => void;
   onLeaveRoom: () => void;
@@ -70,6 +70,7 @@ function SettingsDialog({
   onConfirm,
   onClose,
   errorMessage,
+  confirming,
 }: {
   kind: "configure" | "create" | "edit";
   value: MatchSelection;
@@ -79,6 +80,7 @@ function SettingsDialog({
   onConfirm: () => void;
   onClose: () => void;
   errorMessage: string;
+  confirming: boolean;
 }) {
   const selectedMap = maps.find((map) => map.id === value.mapId);
   const selectedEnvironment = environments[value.environment];
@@ -138,8 +140,8 @@ function SettingsDialog({
         )}
         {errorMessage && <div role="alert" className="mt-4 rounded-lg border border-red-400/25 bg-red-400/[.06] px-3 py-2 text-xs text-red-200">{errorMessage}</div>}
         <div className="mt-6 flex flex-col-reverse gap-2.5 border-t border-white/10 pt-5 sm:flex-row sm:justify-end sm:gap-3">
-          <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-white/12 bg-white/[.03] px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.16em] text-zinc-300 transition-colors hover:bg-white/[.08] hover:text-white">CANCEL</button>
-          <button type="button" onClick={onConfirm} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25">{kind === "create" ? "CONFIRM & CREATE ROOM" : kind === "configure" ? "REVIEW LOBBY" : "SAVE MATCH SETTINGS"}</button>
+          <button type="button" onClick={onClose} disabled={confirming} className="min-h-11 rounded-xl border border-white/12 bg-white/[.03] px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.16em] text-zinc-300 transition-colors hover:bg-white/[.08] hover:text-white disabled:opacity-50">CANCEL</button>
+          <button type="button" onClick={onConfirm} disabled={confirming} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25 disabled:cursor-wait disabled:opacity-60">{confirming ? "PUBLISHING ROOM…" : kind === "create" ? "CONFIRM & CREATE ROOM" : kind === "configure" ? "REVIEW LOBBY" : "SAVE MATCH SETTINGS"}</button>
         </div>
       </section>
     </div>,
@@ -193,12 +195,24 @@ function PrivateLobbyDialog({
   onJoin,
 }: {
   onClose: () => void;
-  onJoin: (code: string) => void;
+  onJoin: (code: string) => Promise<boolean>;
 }) {
   const [code, setCode] = useState("");
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const [joining, setJoining] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (code.length === 6) onJoin(code);
+    if (code.length !== 6 || joining) return;
+    setJoining(true);
+    setError("");
+    try {
+      if (await onJoin(code)) onClose();
+      else setError("That room is no longer active or could not be joined.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not look up that room code.");
+    } finally {
+      setJoining(false);
+    }
   };
   return createPortal(
     <div className="fixed inset-0 z-[2147483001] grid place-items-center bg-[#020408]/88 px-4 py-6 backdrop-blur-md" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -210,9 +224,10 @@ function PrivateLobbyDialog({
         <form className="mt-5" onSubmit={submit}>
           <label htmlFor="private-lobby-code" className="font-mono-tech text-[9px] uppercase tracking-[.16em] text-zinc-400">Room code</label>
           <input id="private-lobby-code" autoFocus required minLength={6} maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} placeholder="A7K4Q2" className="mt-1.5 w-full rounded-xl border border-white/12 bg-black/40 px-3 py-3 font-mono-tech text-lg uppercase tracking-[.28em] text-white outline-none focus:border-sky-300/60" />
+          {error && <div role="alert" className="mt-3 rounded-lg border border-red-400/25 bg-red-400/[.06] px-3 py-2 text-xs text-red-200">{error}</div>}
           <div className="mt-5 flex justify-end gap-2 border-t border-white/10 pt-4">
-            <button type="button" onClick={onClose} className="rounded-xl border border-white/12 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-zinc-300 hover:bg-white/[.06]">Cancel</button>
-            <button type="submit" disabled={code.length !== 6} className="flex items-center gap-2 rounded-xl border border-sky-300/35 bg-sky-300/15 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-sky-100 hover:bg-sky-300/25 disabled:cursor-not-allowed disabled:opacity-40"><Link2 className="h-3.5 w-3.5" /> Join Lobby</button>
+            <button type="button" onClick={onClose} disabled={joining} className="rounded-xl border border-white/12 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-zinc-300 hover:bg-white/[.06] disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={code.length !== 6 || joining} className="flex items-center gap-2 rounded-xl border border-sky-300/35 bg-sky-300/15 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-sky-100 hover:bg-sky-300/25 disabled:cursor-wait disabled:opacity-40"><Link2 className="h-3.5 w-3.5" /> {joining ? "Checking…" : "Join Lobby"}</button>
           </div>
         </form>
       </section>
@@ -222,7 +237,6 @@ function PrivateLobbyDialog({
 }
 
 type PublicLobbyBrowserProps = {
-  websocketUrl: string;
   maps: RaceModeProps["maps"];
   environments: RaceModeProps["environments"];
   error: string | null;
@@ -230,11 +244,10 @@ type PublicLobbyBrowserProps = {
   privateLobbyOpen: boolean;
   onOpenPrivateLobby: () => void;
   onClosePrivateLobby: () => void;
-  onJoinRoom: (code: string) => void;
+  onJoinRoom: (code: string) => Promise<boolean>;
 };
 
 function PublicLobbyBrowser({
-  websocketUrl,
   maps,
   environments,
   error,
@@ -248,29 +261,51 @@ function PublicLobbyBrowser({
   const [lobbySearch, setLobbySearch] = useState("");
   const [refreshingDirectory, setRefreshingDirectory] = useState(false);
   const [lastDirectoryRefresh, setLastDirectoryRefresh] = useState(0);
+  const [directoryError, setDirectoryError] = useState("");
+  const [joiningCode, setJoiningCode] = useState("");
   const directoryRequest = useRef(0);
   const refreshPublicLobbies = useCallback(async () => {
     const request = ++directoryRequest.current;
     setRefreshingDirectory(true);
     try {
-      const discovered = await discoverPublicLobbies(websocketUrl);
+      const discovered = await discoverPublicLobbies();
       if (request === directoryRequest.current) {
         setPublicLobbies(discovered);
+        setDirectoryError("");
         setLastDirectoryRefresh(Date.now());
       }
-    } catch {
-      if (request === directoryRequest.current) setPublicLobbies([]);
+    } catch (reason) {
+      if (request === directoryRequest.current) {
+        setPublicLobbies([]);
+        setDirectoryError(reason instanceof Error ? reason.message : "Could not connect to the lobby database.");
+      }
     } finally {
       if (request === directoryRequest.current) setRefreshingDirectory(false);
     }
-  }, [websocketUrl]);
+  }, []);
+  const joinRoom = async (code: string) => {
+    if (joiningCode) return false;
+    setJoiningCode(code);
+    setDirectoryError("");
+    try {
+      const joined = await onJoinRoom(code);
+      if (!joined) setDirectoryError("That room is no longer active or could not be joined.");
+      return joined;
+    } catch (reason) {
+      setDirectoryError(reason instanceof Error ? reason.message : "Could not look up that room code.");
+      return false;
+    } finally {
+      setJoiningCode("");
+      void refreshPublicLobbies();
+    }
+  };
   const filteredPublicLobbies = publicLobbies.filter((lobby) => {
     const query = lobbySearch.trim().toLowerCase();
     return !query || lobby.roomCode.toLowerCase().includes(query) || lobby.hostName.toLowerCase().includes(query);
   });
   useEffect(() => {
     void refreshPublicLobbies();
-    const interval = window.setInterval(() => { void refreshPublicLobbies(); }, 10_000);
+    const interval = window.setInterval(() => { void refreshPublicLobbies(); }, 5_000);
     return () => {
       window.clearInterval(interval);
       directoryRequest.current++;
@@ -283,7 +318,7 @@ function PublicLobbyBrowser({
                   <div>
                     <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">Online Multiplayer · Public Directory</div>
                     <h3 id="public-lobbies-title" className="mt-1 font-display text-lg font-semibold text-white">Available lobbies <span className="ml-1 font-mono-tech text-xs text-zinc-500">{publicLobbies.length}</span></h3>
-                    <p className="mt-1 text-[10px] text-zinc-500">{websocketUrl ? "Browse public relay rooms, or use an invite code for a private room." : "Same-browser preview rooms are listed here; use an invite code for a private room."}</p>
+                    <p className="mt-1 text-[10px] text-zinc-500">Browse active rooms across devices. Private invite-code rooms stay out of this public list.</p>
                   </div>
                   <button type="button" onClick={() => void refreshPublicLobbies()} disabled={refreshingDirectory} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/12 bg-white/[.04] px-3.5 font-mono-tech text-[9px] font-bold uppercase tracking-[.13em] text-zinc-200 transition-colors hover:border-sky-300/35 hover:bg-sky-300/[.07] hover:text-sky-100 disabled:cursor-wait disabled:opacity-60" aria-label="Refresh public lobby list">
                     <RefreshCw className={`h-3.5 w-3.5 ${refreshingDirectory ? "animate-spin" : ""}`} /> Refresh
@@ -323,7 +358,7 @@ function PublicLobbyBrowser({
                             <td className="px-4 py-3.5"><span className="block max-w-48 truncate font-display text-[11px] font-medium text-zinc-100">{map?.name ?? lobby.mapId}</span></td>
                             <td className="px-4 py-3.5"><span className="inline-flex max-w-40 items-center gap-1.5 truncate font-mono-tech text-[9px] text-zinc-400"><MapPin className="h-3 w-3 shrink-0 text-zinc-600" />{map?.region ?? "Unlisted"}</span></td>
                             <td className="px-4 py-3.5 text-right">
-                              <button type="button" onClick={() => onJoinRoom(lobby.roomCode)} disabled={full} aria-label={`Join room ${lobby.roomCode}`} className="min-w-20 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-[.12em] text-sky-100 transition-colors hover:border-sky-300/45 hover:bg-sky-300/[.16] disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/[.025] disabled:text-zinc-600">{full ? "Full" : "Join"}</button>
+                              <button type="button" onClick={() => void joinRoom(lobby.roomCode)} disabled={full || Boolean(joiningCode)} aria-label={`Join room ${lobby.roomCode}`} className="min-w-20 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-[.12em] text-sky-100 transition-colors hover:border-sky-300/45 hover:bg-sky-300/[.16] disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/[.025] disabled:text-zinc-600">{full ? "Full" : joiningCode === lobby.roomCode ? "Joining…" : "Join"}</button>
                             </td>
                           </tr>
                         );
@@ -347,12 +382,12 @@ function PublicLobbyBrowser({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-600 sm:px-5">
-                  <span>Auto-refresh · every 10 seconds · private rooms require an invite code</span>
+                  <span>Supabase room registry · auto-refresh every 5 seconds · private rooms require an invite code</span>
                   <span aria-live="polite">{lastDirectoryRefresh ? `Updated ${new Date(lastDirectoryRefresh).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Waiting for directory"}</span>
                 </div>
-                {error && <div role="alert" className="mx-4 mb-4 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-[11px] text-red-200 sm:mx-5">{error}</div>}
+                {(error || directoryError) && <div role="alert" className="mx-4 mb-4 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-[11px] text-red-200 sm:mx-5">{directoryError || error}</div>}
               </section>
-      {privateLobbyOpen && <PrivateLobbyDialog onClose={onClosePrivateLobby} onJoin={(code) => { onClosePrivateLobby(); onJoinRoom(code); }} />}
+      {privateLobbyOpen && <PrivateLobbyDialog onClose={onClosePrivateLobby} onJoin={joinRoom} />}
     </>
   );
 }
@@ -364,7 +399,6 @@ export function RaceMode({
   children,
   footer,
   room,
-  websocketUrl = "",
   cars,
   maps,
   environments,
@@ -381,6 +415,7 @@ export function RaceMode({
   const [settingsKind, setSettingsKind] = useState<"configure" | "create" | "edit" | null>(null);
   const [leaveLobbyConfirmation, setLeaveLobbyConfirmation] = useState(false);
   const [creationError, setCreationError] = useState("");
+  const [creatingRoom, setCreatingRoom] = useState(false);
   const [draftSettings, setDraftSettings] = useState<MatchSelection>(initialSettings);
   const [vehicleThumbnails, setVehicleThumbnails] = useState<Record<string, string>>({});
   const [thumbnailRenderFailed, setThumbnailRenderFailed] = useState(false);
@@ -455,15 +490,23 @@ export function RaceMode({
     });
     return () => { cancelled = true; };
   }, [mode, room.roomCode]);
-  const confirmSettings = () => {
+  const confirmSettings = async () => {
     if (settingsKind === "configure") {
       setSettingsKind("create");
       return;
     }
     if (settingsKind === "create") {
-      if (!onCreateRoom(draftSettings)) {
-        setCreationError("Room could not be initialized. Please try again.");
+      setCreatingRoom(true);
+      try {
+        if (!(await onCreateRoom(draftSettings))) {
+          setCreationError("Room could not be published. Check the connection and try again.");
+          return;
+        }
+      } catch (reason) {
+        setCreationError(reason instanceof Error ? reason.message : "Room could not be published. Check the connection and try again.");
         return;
+      } finally {
+        setCreatingRoom(false);
       }
     } else if (settingsKind === "edit") {
       onUpdateSettings(draftSettings);
@@ -509,7 +552,6 @@ export function RaceMode({
           <div className="mt-4 space-y-4">
             <div className={room.roomCode ? "mt-4 space-y-4" : "mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,.65fr)]"}>
               <PublicLobbyBrowser
-                websocketUrl={websocketUrl}
                 maps={maps}
                 environments={environments}
                 error={room.error}
@@ -542,7 +584,7 @@ export function RaceMode({
                 {room.isHost && <button type="button" disabled={!room.connected} onClick={() => openSettings("edit")} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-wider text-sky-100 hover:border-sky-300/45 hover:bg-sky-300/[.14] disabled:cursor-not-allowed disabled:opacity-45"><Pencil className="h-3 w-3" /> Edit Match Settings</button>}
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-zinc-500">Driver lobby · {room.players.length} connected</div><div className="mt-1 font-display text-sm font-semibold text-white">{connectedPlayersReady ? "Everyone is ready" : "Ready up before the host launches"}</div></div><div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/20 px-2.5 py-1.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-400"><span className={`h-1.5 w-1.5 rounded-full ${room.connected ? "bg-emerald-400" : "bg-amber-400"}`} />{room.transport === "websocket" ? "WebSocket" : "Local preview · same-browser tabs"}</div></div>
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-zinc-500">Driver lobby · {room.players.length} connected</div><div className="mt-1 font-display text-sm font-semibold text-white">{connectedPlayersReady ? "Everyone is ready" : "Ready up before the host launches"}</div></div><div className="flex items-center gap-2 rounded-full border border-white/8 bg-black/20 px-2.5 py-1.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-400"><span className={`h-1.5 w-1.5 rounded-full ${room.connected ? "bg-emerald-400" : "bg-amber-400"}`} />{room.transport === "websocket" ? "WebSocket" : room.transport === "supabase" ? "Supabase Realtime" : "Local preview · same-browser tabs"}</div></div>
 
               <div className="grid gap-2 sm:grid-cols-2">{room.players.map((player) => {
                 const vehicle = cars.find((car) => car.id === player.carId);
@@ -560,7 +602,7 @@ export function RaceMode({
                 </article>;
               })}</div><p className="mt-2 text-[9px] text-zinc-600">*McLaren Vision GT performance figures are in-game estimates for this race setup.</p></div>
 
-              <div className="flex flex-col gap-3 border-t border-white/8 pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-[10px] text-zinc-500">{room.transport === "preview" ? "Preview rooms sync between open tabs on this browser origin. Cross-device play needs VITE_MULTIPLAYER_WS_URL." : "Room state and car telemetry are relayed through the configured WebSocket server."}</div><button type="button" onClick={onToggleReady} disabled={!room.connected} aria-pressed={Boolean(localPlayer?.ready)} className={`flex shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${localPlayer?.ready ? "border-emerald-300/35 bg-emerald-300/10 text-emerald-100" : "border-sky-300/35 bg-sky-300/10 text-sky-100 hover:bg-sky-300/20"}`}><Check className="h-3.5 w-3.5" />{localPlayer?.ready ? "Ready · click to undo" : "I'm ready"}</button></div>
+              <div className="flex flex-col gap-3 border-t border-white/8 pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-[10px] text-zinc-500">{room.transport === "preview" ? "Preview rooms sync only between tabs on this browser. Configure Supabase or VITE_MULTIPLAYER_WS_URL for cross-device races." : room.transport === "supabase" ? "Player state, readiness, race start and car telemetry sync through Supabase Realtime across devices." : "Room state and car telemetry are relayed through the configured WebSocket server."}</div><button type="button" onClick={onToggleReady} disabled={!room.connected} aria-pressed={Boolean(localPlayer?.ready)} className={`flex shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${localPlayer?.ready ? "border-emerald-300/35 bg-emerald-300/10 text-emerald-100" : "border-sky-300/35 bg-sky-300/10 text-sky-100 hover:bg-sky-300/20"}`}><Check className="h-3.5 w-3.5" />{localPlayer?.ready ? "Ready · click to undo" : "I'm ready"}</button></div>
 
                 </div>
               ) : (
@@ -584,7 +626,7 @@ export function RaceMode({
         </div>
         {footer && <div className="mt-7 w-full">{footer}</div>}
       </div>
-      {settingsKind && <SettingsDialog kind={settingsKind} value={draftSettings} onChange={setDraftSettings} maps={maps} environments={environments} onConfirm={confirmSettings} onClose={() => setSettingsKind(null)} errorMessage={settingsKind === "create" ? creationError : ""} />}
+      {settingsKind && <SettingsDialog kind={settingsKind} value={draftSettings} onChange={setDraftSettings} maps={maps} environments={environments} onConfirm={confirmSettings} onClose={() => setSettingsKind(null)} errorMessage={settingsKind === "create" ? creationError : ""} confirming={creatingRoom} />}
       {leaveLobbyConfirmation && room.roomCode && <LeaveLobbyDialog roomCode={room.roomCode} onStay={() => setLeaveLobbyConfirmation(false)} onLeave={confirmLeaveRoom} />}
     </section>
   );

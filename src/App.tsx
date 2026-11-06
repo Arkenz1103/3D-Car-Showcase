@@ -46,6 +46,7 @@ import { clearGuestProfile, createGuestProfile, DEFAULT_PROFILE, loadPlayerProfi
 import { loadGuestGarageSave, storeGuestGarageSave, clearGuestGarageSave, normalizeGarageSave } from "@/lib/garageSave";
 import { restoreCurrentAccount, saveAccountProgress, signOutAccount, type AccountProfile } from "@/lib/authService";
 import { supabaseConfigured } from "@/lib/supabase";
+import { createPublicRoom, heartbeatPublicRoom, joinPublicRoom, leavePublicRoom } from "@/lib/publicRoomDirectory";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit, warmRaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
@@ -197,6 +198,7 @@ export function App() {
   });
   const requestSequence = React.useRef(0);
   const authChoiceMadeRef = React.useRef(false);
+  const publicRoomHostTokenRef = React.useRef<string | null>(null);
   const garageSoundtrackRef = React.useRef<GarageSoundtrackHandle>(null);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
@@ -208,6 +210,31 @@ export function App() {
     [],
   );
   React.useEffect(() => subscribeMultiplayerState(setMultiplayerSnapshot), []);
+  const onlineRoomPlayerName = multiplayerSnapshot.players.find((player) => player.id === multiplayerSnapshot.localPlayerId)?.username ?? playerProfile.displayName;
+  const onlineRoomMapId = multiplayerSnapshot.settings?.mapId ?? raceSetupMap;
+  const onlineRoomWeather = multiplayerSnapshot.settings?.environment ?? raceSetupEnvironment;
+  React.useEffect(() => {
+    const { roomCode, localPlayerId, connected, isHost } = multiplayerSnapshot;
+    if (!roomCode || !connected) return;
+    let active = true;
+    const heartbeat = async () => {
+      try {
+        await heartbeatPublicRoom(roomCode, localPlayerId, isHost ? publicRoomHostTokenRef.current : null, isHost ? {
+          hostName: onlineRoomPlayerName,
+          mapId: onlineRoomMapId,
+          weather: onlineRoomWeather,
+        } : undefined);
+      } catch (error) {
+        if (active) console.warn("Public room heartbeat failed; the room will expire if the connection stays offline.", error);
+      }
+    };
+    void heartbeat();
+    const interval = window.setInterval(() => { void heartbeat(); }, 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [multiplayerSnapshot.roomCode, multiplayerSnapshot.localPlayerId, multiplayerSnapshot.connected, multiplayerSnapshot.isHost, onlineRoomPlayerName, onlineRoomMapId, onlineRoomWeather]);
   React.useEffect(() => {
     if (multiplayerSnapshot.connected) updateLocalPlayer(playerProfile, Q);
   }, [multiplayerSnapshot.connected, playerProfile, Q]);
@@ -300,25 +327,56 @@ export function App() {
     // returning to Online Multiplayer should restore this same room.
     setRaceModeType(mode);
   }, []);
-  const createOnlineRoom = React.useCallback((settings) => {
+  const createOnlineRoom = React.useCallback(async (settings) => {
     setRaceModeType("online");
     setRaceSetupMap(settings.mapId);
     setRaceSetupEnvironment(settings.environment);
     setRaceSetupDifficulty("normal");
+    const current = getMultiplayerSnapshot();
+    const published = await createPublicRoom({
+      hostId: current.localPlayerId,
+      hostName: playerProfile.displayName,
+      mapId: settings.mapId,
+      weather: settings.environment,
+    });
+    publicRoomHostTokenRef.current = published.hostToken;
     try {
-      const roomCode = createRaceRoom(playerProfile, Q, MULTIPLAYER_WS_URL, { ...settings, playerIds: [] });
+      const roomCode = createRaceRoom(playerProfile, Q, MULTIPLAYER_WS_URL, { ...settings, playerIds: [] }, published.room.roomCode);
       const createdRoom = getMultiplayerSnapshot();
+      if (!roomCode || createdRoom.roomCode !== roomCode || !createdRoom.isHost || (!createdRoom.connected && !createdRoom.connecting)) {
+        throw new Error("The room was created but the multiplayer lobby could not start.");
+      }
       setMultiplayerSnapshot(createdRoom);
-      return Boolean(roomCode && createdRoom.roomCode === roomCode && createdRoom.isHost);
-    } catch {
-      return false;
+      return true;
+    } catch (error) {
+      publicRoomHostTokenRef.current = null;
+      void leavePublicRoom(published.room.roomCode, current.localPlayerId, published.hostToken).catch((cleanupError) => {
+        console.warn("Could not clean up the unpublished room row.", cleanupError);
+      });
+      throw error;
     }
   }, [playerProfile, Q]);
-  const joinOnlineRoom = React.useCallback((code) => {
+  const joinOnlineRoom = React.useCallback(async (code) => {
     setRaceModeType("online");
-    joinRaceRoom(code, playerProfile, Q, MULTIPLAYER_WS_URL);
+    const playerId = getMultiplayerSnapshot().localPlayerId;
+    const activeRoom = await joinPublicRoom(code, playerId);
+    const joined = joinRaceRoom(activeRoom.roomCode, playerProfile, Q, MULTIPLAYER_WS_URL);
+    const connection = getMultiplayerSnapshot();
+    if (!joined || (!connection.connected && !connection.connecting)) {
+      void leavePublicRoom(activeRoom.roomCode, playerId, null).catch((error) => console.warn("Could not release the reserved room slot.", error));
+      return false;
+    }
+    return true;
   }, [playerProfile, Q]);
   const leaveOnlineRoom = React.useCallback(() => {
+    const current = getMultiplayerSnapshot();
+    if (current.roomCode) {
+      const hostToken = current.isHost ? publicRoomHostTokenRef.current : null;
+      void leavePublicRoom(current.roomCode, current.localPlayerId, hostToken).catch((error) => {
+        console.warn("Could not update the public room directory after leaving.", error);
+      });
+    }
+    publicRoomHostTokenRef.current = null;
     disconnectRaceRoom();
     setMultiplayerSnapshot(getMultiplayerSnapshot());
     setRaceModeType("online");
@@ -1525,7 +1583,6 @@ export function App() {
           mode={raceModeType}
           onModeChange={chooseRaceMode}
           room={multiplayerSnapshot}
-          websocketUrl={MULTIPLAYER_WS_URL}
           cars={CARS.map(({ id, brand, model, shortTitle, accentHex }) => ({ id, brand, model, shortTitle, accentHex }))}
           maps={RACE_MAPS}
           environments={MULTIPLAYER_ENVIRONMENTS}

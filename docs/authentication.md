@@ -24,7 +24,7 @@ In the Supabase SQL Editor, open and run the complete file:
 
 It creates `public.profiles`, row-level security policies, the case-insensitive unique username index, the real-time username availability RPC, and the trigger that creates a profile for each new Auth user. The database unique index is the final authority if two players try to claim the same username simultaneously.
 
-Alternatively, if you use the Supabase CLI, link your project and run `supabase db push` from the repository root.
+Alternatively, if you use the Supabase CLI, link your project and run `supabase db push` from the repository root. Cross-device multiplayer also needs the separate room-directory migration documented in [`multiplayer.md`](multiplayer.md); apply that migration in the SQL Editor as well if you are not using the CLI.
 
 ## 3. Deploy username sign-in
 

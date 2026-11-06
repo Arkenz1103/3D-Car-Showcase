@@ -1,8 +1,8 @@
-# Multiplayer preview and WebSocket relay
+# Multiplayer rooms and cross-device racing
 
-The race lobby includes a guest profile and a transport adapter. Without configuration, rooms use the browser `BroadcastChannel` API and synchronize across tabs opened at the same preview origin. This is a local preview transport, not public internet matchmaking.
+The race lobby includes a guest profile and a transport adapter. With Supabase configured, the public room directory is shared across devices from `public.rooms`; the browser polls the database every five seconds. Room gameplay messages use Supabase Realtime Broadcast channels by default, so players on separate PCs or phones can exchange readiness, race-start, and vehicle-pose updates without a separately hosted relay. `BroadcastChannel` remains only as the no-Supabase, same-browser preview fallback.
 
-To relay rooms over the internet, set `VITE_MULTIPLAYER_WS_URL` to a hosted `ws://` or `wss://` server and rebuild/restart the app. The server should accept JSON messages and broadcast each message to the other connected clients in the same `roomCode` (do not echo a sender's own message). The client protocol is (including host lobby-setting changes and a shared countdown delay to avoid relying on synchronized device clocks; remaining start skew is bounded by message transit time):
+An external WebSocket relay can optionally override Supabase Realtime by setting `VITE_MULTIPLAYER_WS_URL` to a hosted `ws://` or `wss://` server and rebuilding/restarting the app. Such a server should accept JSON messages and broadcast each message to the other connected clients in the same `roomCode` (do not echo a sender's own message). The optional client protocol is (including host lobby-setting changes and a shared countdown delay to avoid relying on synchronized device clocks; remaining start skew is bounded by message transit time):
 
 ```json
 {"type":"join","roomCode":"A7K4Q2","from":"player-id","player":{"id":"player-id","username":"Guest Racer","level":1,"rank":"ROOKIE","carId":"sf90","ready":false,"isHost":true}}
@@ -16,20 +16,16 @@ To relay rooms over the internet, set `VITE_MULTIPLAYER_WS_URL` to a hosted `ws:
 {"type":"leave","roomCode":"A7K4Q2","from":"player-id"}
 ```
 
-A client can also request the public lobby directory over a short-lived WebSocket connection:
+## Shared Supabase room directory
 
-```json
-{"type":"listRooms"}
-{"type":"roomList","rooms":[{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}]}
-```
+Add the project URL and browser-safe anon/publishable key as described in [authentication setup](authentication.md), then run this migration in the Supabase SQL Editor or with `supabase db push`:
 
-The relay should respond with only active, publicly joinable rooms; omit private rooms from `roomList` (the client also ignores entries explicitly marked `isPublic: false`). A WebSocket host publishes its listing after connecting and renews it with its heartbeat; on disconnect it sends `unpublishLobby`. The relay must add/update listings on `publishLobby`, expire stale listings using `expiresAt`, and remove a listing on `unpublishLobby` only when the message's `from`/`hostId` matches that room's host. Example host messages:
+`supabase/migrations/20261106011422_public_room_directory.sql`
 
-```json
-{"type":"publishLobby","roomCode":"A7K4Q2","from":"player-id","lobby":{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}}
-{"type":"unpublishLobby","roomCode":"A7K4Q2","from":"player-id","lobby":{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}}
-```
+The migration creates `public.rooms` with room code, host name, map, weather, player count, visibility, and an expiring lease. Hosts create rows through `create_public_room`; clients use `join_room_by_code` to check that the room is still active and atomically claim a player slot. Host/guest heartbeats renew room membership, and leaving removes the member or closes the host room. The UI polls this shared table every five seconds, so changes appear on different PCs and networks. Private entries are excluded from the public list but can still be looked up by invite code.
 
-The client re-requests the directory on manual refresh and every ten seconds. Without a relay directory response, it still discovers active same-origin preview rooms from the local room registry. The existing preview transport is not public internet matchmaking.
+Direct writes and reads of host capabilities are denied by row-level security. The browser uses narrowly scoped RPCs and an unguessable host token; stale rows expire automatically after a host stops heartbeating. No service-role key is used in the browser. Supabase must be configured for public create/join to work; the directory intentionally does not fall back to localStorage.
 
-The relay should only route room messages and enforce room membership/size; it must not trust client readiness or race results as secure competitive data. The current profile is browser-local (`Guest Racer` by default); authentication, server-side identity, authoritative physics, and ranked matchmaking are not included.
+The `public.rooms` table is the cross-device directory and authoritative join/slot check. Supabase Realtime Broadcast is the default live room transport for driver presence, readiness, host settings, synchronized race starts, and car poses. No separate WebSocket server is required when Supabase is configured. Setting `VITE_MULTIPLAYER_WS_URL` opts into the external relay protocol instead.
+
+The relay should only route room messages and enforce room membership/size; it must not trust client readiness or race results as secure competitive data. Guests remain supported, while optional Supabase accounts and cloud saves are documented in [authentication setup](authentication.md). Server-authoritative physics and ranked matchmaking are not included.
