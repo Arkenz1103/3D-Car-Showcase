@@ -1,5 +1,5 @@
 // @ts-nocheck
-import SF90_GLB_URL from "@/assets/models/sf90-stradale.glb?url";
+import SF90_GLB_URL from "@/assets/models/sf90-stradale";
 import { Box3, BufferGeometry, Mesh, Vector3 } from "three";
 import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from "three-mesh-bvh";
 import DRACO_WASM_URL from "three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url";

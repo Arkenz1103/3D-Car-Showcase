@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Locally hosted fonts are emitted as cacheable static assets. */
+/* Typefaces (inlined into the single-file build) */
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";

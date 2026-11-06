@@ -6,7 +6,7 @@ type LoadingScreenProps = {
 };
 
 const LOADING_DURATION_MS = 4000;
-const LOADING_BACKGROUND_IMAGE = "/images/city-of-speedrunners-loading-v2.webp";
+const LOADING_BACKGROUND_IMAGE = "/images/city-of-speedrunners-loading-v2.png";
 
 export function LoadingScreen({ assetReady, onComplete }: LoadingScreenProps) {
   const [progress, setProgress] = React.useState(1);
