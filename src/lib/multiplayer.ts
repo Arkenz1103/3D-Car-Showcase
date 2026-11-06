@@ -1,4 +1,6 @@
 import type { PlayerProfile } from "@/lib/playerProfile";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 export type RacePose = {
   x: number;
@@ -29,7 +31,7 @@ export type MultiplayerSnapshot = {
   connected: boolean;
   connecting: boolean;
   isHost: boolean;
-  transport: "none" | "preview" | "websocket";
+  transport: "none" | "preview" | "websocket" | "supabase";
   players: RoomPlayer[];
   settings: OnlineRaceSettings | null;
   error: string | null;
@@ -50,7 +52,7 @@ export type PublicLobby = {
   mapId: string;
   environment: number;
   expiresAt: number;
-  source: "preview" | "websocket";
+  source: "supabase";
 };
 
 type RoomMessage = {
@@ -77,7 +79,7 @@ export type MultiplayerEvent = {
   raceStartAt?: number;
 };
 
-const LOCAL_ROOM_PREFIX = "city-speedrunners-room-";
+const LOCAL_CHANNEL_PREFIX = "city-speedrunners-room-";
 const PEER_STALE_MS = 12_000;
 const HEARTBEAT_MS = 2_000;
 const POSE_SEND_INTERVAL_MS = 50;
@@ -105,6 +107,7 @@ let snapshot: MultiplayerSnapshot = {
 };
 let localPlayer: RoomPlayer | null = null;
 let channel: BroadcastChannel | null = null;
+let realtimeChannel: RealtimeChannel | null = null;
 let socket: WebSocket | null = null;
 let heartbeatTimer = 0;
 let lastPoseSentAt = 0;
@@ -161,36 +164,19 @@ function send(type: string, payload: Record<string, unknown> = {}) {
     ...payload,
   };
   if (channel) channel.postMessage(message);
+  if (realtimeChannel && snapshot.connected) {
+    void realtimeChannel.send({ type: "broadcast", event: "room-message", payload: message }).catch((error) => {
+      if (snapshot.roomCode !== message.roomCode) return;
+      snapshot = { ...snapshot, error: error instanceof Error ? error.message : "Supabase Realtime could not send a room update." };
+      notify();
+    });
+  }
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 }
 
 function sendPresence() {
   if (!localPlayer) return;
   send("presence", { players: sortedPlayers([localPlayer, ...snapshot.players]), settings: snapshot.settings ?? undefined });
-}
-
-function roomRegistryKey(roomCode: string) {
-  return `${LOCAL_ROOM_PREFIX}${roomCode}`;
-}
-
-function markLocalRoomAlive() {
-  if (!snapshot.roomCode || !snapshot.isHost || snapshot.transport !== "preview") return;
-  try {
-    const key = roomRegistryKey(snapshot.roomCode);
-    const current = JSON.parse(window.localStorage.getItem(key) || "null");
-    if (current?.expiresAt > Date.now() && current.hostId !== localPlayerId) return;
-    window.localStorage.setItem(key, JSON.stringify({
-      hostId: localPlayerId,
-      hostName: localPlayer?.username || "Room Host",
-      playerCount: Math.max(1, snapshot.players.length),
-      maxPlayers: 4,
-      mapId: snapshot.settings?.mapId ?? "manila",
-      environment: snapshot.settings?.environment ?? 0,
-      expiresAt: Date.now() + PEER_STALE_MS,
-    }));
-  } catch {
-    // The in-browser room still works if storage is unavailable.
-  }
 }
 
 function publishHostLobby(type: "publishLobby" | "unpublishLobby" = "publishLobby") {
@@ -224,108 +210,6 @@ function maybeBroadcastRaceCountdown() {
   for (const listener of eventListeners) {
     listener({ type: "raceCountdown", settings: snapshot.settings ?? undefined, raceStartAt });
   }
-}
-
-function localRoomIsAvailable(roomCode: string) {
-  try {
-    const record = JSON.parse(window.localStorage.getItem(roomRegistryKey(roomCode)) || "null");
-    return Boolean(record?.expiresAt > Date.now());
-  } catch {
-    return false;
-  }
-}
-
-function getLocalPublicLobbies(): PublicLobby[] {
-  const entries: PublicLobby[] = [];
-  try {
-    for (let index = 0; index < window.localStorage.length; index++) {
-      const key = window.localStorage.key(index);
-      if (!key?.startsWith(LOCAL_ROOM_PREFIX)) continue;
-      try {
-        const roomCode = key.slice(LOCAL_ROOM_PREFIX.length);
-        const record = JSON.parse(window.localStorage.getItem(key) || "null");
-        if (!/^[A-Z0-9]{6}$/.test(roomCode) || !record?.hostId || record.expiresAt <= Date.now()) continue;
-        entries.push({
-          roomCode,
-          hostId: String(record.hostId),
-          hostName: typeof record.hostName === "string" && record.hostName.trim() ? record.hostName : "Room Host",
-          playerCount: Math.max(1, Math.min(4, Number.isInteger(record.playerCount) ? record.playerCount : 1)),
-          maxPlayers: Math.max(1, Math.min(4, Number.isInteger(record.maxPlayers) ? record.maxPlayers : 4)),
-          mapId: typeof record.mapId === "string" ? record.mapId : "manila",
-          environment: Number.isInteger(record.environment) ? Math.max(0, Math.min(2, record.environment)) : 0,
-          expiresAt: Number(record.expiresAt),
-          source: "preview",
-        });
-      } catch {
-        // Skip a malformed stale registry entry without hiding other active rooms.
-      }
-    }
-  } catch {
-    // Lobby browsing still works from a WebSocket room directory if local storage is blocked.
-  }
-  return entries.sort((a, b) => a.roomCode.localeCompare(b.roomCode));
-}
-
-function normalizeRemoteLobby(value: unknown): PublicLobby | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Partial<PublicLobby> & { isPublic?: boolean };
-  const roomCode = typeof record.roomCode === "string" ? record.roomCode.toUpperCase() : "";
-  if (record.isPublic === false || !/^[A-Z0-9]{6}$/.test(roomCode)) return null;
-  const expiresAt = Number.isFinite(record.expiresAt) ? Number(record.expiresAt) : Date.now() + PEER_STALE_MS;
-  if (expiresAt <= Date.now()) return null;
-  return {
-    roomCode,
-    hostId: typeof record.hostId === "string" ? record.hostId : "",
-    hostName: typeof record.hostName === "string" && record.hostName.trim() ? record.hostName.slice(0, 24) : "Room Host",
-    playerCount: Math.max(1, Math.min(4, Number.isInteger(record.playerCount) ? Number(record.playerCount) : 1)),
-    maxPlayers: Math.max(1, Math.min(4, Number.isInteger(record.maxPlayers) ? Number(record.maxPlayers) : 4)),
-    mapId: typeof record.mapId === "string" ? record.mapId : "manila",
-    environment: Number.isInteger(record.environment) ? Math.max(0, Math.min(2, Number(record.environment))) : 0,
-    expiresAt,
-    source: "websocket",
-  };
-}
-
-/**
- * Reads same-origin preview rooms and, when configured, asks the relay for its
- * public directory. The relay protocol uses { type: "listRooms" } and replies
- * with { type: "roomList", rooms: [...] }.
- */
-export function discoverPublicLobbies(websocketUrl = "", timeoutMs = 1_600): Promise<PublicLobby[]> {
-  const localRooms = getLocalPublicLobbies();
-  if (!websocketUrl || typeof WebSocket === "undefined") return Promise.resolve(localRooms);
-  return new Promise((resolve) => {
-    let socket: WebSocket | null = null;
-    let settled = false;
-    const timer = window.setTimeout(() => finish(localRooms), timeoutMs);
-    const finish = (remoteRooms: PublicLobby[]) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      try { socket?.close(); } catch { /* Ignore stale relay sockets. */ }
-      const byCode = new Map(localRooms.map((entry) => [entry.roomCode, entry]));
-      for (const entry of remoteRooms) byCode.set(entry.roomCode, entry);
-      resolve([...byCode.values()].sort((a, b) => a.roomCode.localeCompare(b.roomCode)));
-    };
-    try {
-      socket = new WebSocket(websocketUrl);
-      socket.onopen = () => { if (!settled) socket?.send(JSON.stringify({ type: "listRooms" })); };
-      socket.onmessage = (event) => {
-        if (settled) return;
-        try {
-          const message = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-          if (message?.type !== "roomList" || !Array.isArray(message.rooms)) return;
-          finish(message.rooms.map(normalizeRemoteLobby).filter((entry: PublicLobby | null): entry is PublicLobby => Boolean(entry)));
-        } catch {
-          // Ignore unrelated or malformed relay packets and retain the local directory.
-        }
-      };
-      socket.onerror = () => finish(localRooms);
-      socket.onclose = () => finish(localRooms);
-    } catch {
-      finish(localRooms);
-    }
-  });
 }
 
 function receive(event: MessageEvent | RoomMessage) {
@@ -425,17 +309,20 @@ function receive(event: MessageEvent | RoomMessage) {
 function disconnectTransport() {
   if (heartbeatTimer) window.clearInterval(heartbeatTimer);
   heartbeatTimer = 0;
-  if (snapshot.roomCode && snapshot.isHost && snapshot.transport === "preview") {
-    try {
-      const key = roomRegistryKey(snapshot.roomCode);
-      const stored = JSON.parse(window.localStorage.getItem(key) || "null");
-      if (stored?.hostId === localPlayerId) window.localStorage.removeItem(key);
-    } catch {
-      // Ignore storage cleanup failures.
-    }
-  }
   publishHostLobby("unpublishLobby");
-  send("leave");
+  if (realtimeChannel) {
+    const closingChannel = realtimeChannel;
+    realtimeChannel = null;
+    if (snapshot.roomCode && localPlayer) {
+      const leaveMessage: RoomMessage = { type: "leave", roomCode: snapshot.roomCode, from: localPlayerId };
+      void closingChannel.send({ type: "broadcast", event: "room-message", payload: leaveMessage })
+        .then(() => closingChannel.unsubscribe(), () => closingChannel.unsubscribe());
+    } else {
+      void closingChannel.unsubscribe();
+    }
+  } else {
+    send("leave");
+  }
   channel?.close();
   channel = null;
   if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
@@ -470,7 +357,7 @@ function connect(options: {
 }) {
   disconnectTransport();
   const roomCode = options.roomCode.toUpperCase();
-  const transport = options.websocketUrl ? "websocket" : "preview";
+  const transport = options.websocketUrl ? "websocket" : supabaseConfigured && supabase ? "supabase" : "preview";
   const now = Date.now();
   localPlayer = {
     id: localPlayerId,
@@ -496,10 +383,48 @@ function connect(options: {
   };
   notify();
 
-  if (options.isHost && transport === "preview") markLocalRoomAlive();
-  if (!options.websocketUrl && typeof BroadcastChannel !== "undefined") {
+  if (transport === "supabase" && supabase) {
     try {
-      channel = new BroadcastChannel(`${LOCAL_ROOM_PREFIX}${roomCode}`);
+      const currentChannel = supabase.channel(`city-speedrunners-room:${roomCode}`, {
+        config: { broadcast: { self: false, ack: false } },
+      });
+      realtimeChannel = currentChannel;
+      currentChannel.on("broadcast", { event: "room-message" }, (packet) => {
+        const payload = packet && typeof packet === "object" && "payload" in packet
+          ? (packet as { payload?: unknown }).payload
+          : packet;
+        if (payload) receive(payload as RoomMessage);
+      });
+      currentChannel.subscribe((status, error) => {
+        if (snapshot.roomCode !== roomCode || realtimeChannel !== currentChannel) return;
+        if (status === "SUBSCRIBED") {
+          snapshot = { ...snapshot, connected: true, connecting: false, error: null };
+          notify();
+          send("join", { player: localPlayer });
+          sendPresence();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          snapshot = {
+            ...snapshot,
+            connected: false,
+            connecting: false,
+            error: error?.message || `Supabase Realtime channel ${status.toLowerCase()}. Check the project Realtime service and try again.`,
+          };
+          notify();
+        }
+      });
+    } catch (error) {
+      realtimeChannel = null;
+      snapshot = {
+        ...snapshot,
+        connected: false,
+        connecting: false,
+        error: error instanceof Error ? error.message : "Could not open the Supabase Realtime room channel.",
+      };
+      notify();
+    }
+  } else if (transport === "preview" && typeof BroadcastChannel !== "undefined") {
+    try {
+      channel = new BroadcastChannel(`${LOCAL_CHANNEL_PREFIX}${roomCode}`);
       channel.onmessage = receive;
       snapshot = { ...snapshot, connected: true, connecting: false };
       notify();
@@ -508,11 +433,9 @@ function connect(options: {
     } catch {
       channel = null;
     }
-  }
-
-  if (options.websocketUrl && typeof WebSocket !== "undefined") {
+  } else if (transport === "websocket" && typeof WebSocket !== "undefined") {
     try {
-      socket = new WebSocket(options.websocketUrl);
+      socket = new WebSocket(options.websocketUrl!);
       socket.onopen = () => {
         if (snapshot.roomCode !== roomCode) return;
         snapshot = { ...snapshot, connected: true, connecting: false };
@@ -535,8 +458,11 @@ function connect(options: {
       snapshot = { ...snapshot, connected: false, connecting: false, error: "Could not open the multiplayer WebSocket." };
       notify();
     }
-  } else if (!channel) {
-    snapshot = { ...snapshot, connected: false, connecting: false, error: "Room preview needs BroadcastChannel support or a hosted WebSocket server." };
+  } else {
+    const error = transport === "supabase"
+      ? "Supabase Realtime is not available; check the project connection and refresh."
+      : "Room preview needs BroadcastChannel support or a configured realtime service.";
+    snapshot = { ...snapshot, connected: false, connecting: false, error };
     notify();
   }
 
@@ -544,13 +470,12 @@ function connect(options: {
     heartbeatTimer = window.setInterval(() => {
       if (!localPlayer) return;
       localPlayer.lastSeen = Date.now();
-      markLocalRoomAlive();
       send("heartbeat", { player: localPlayer });
       const now = Date.now();
       const fresh = snapshot.players.filter((player) => player.id === localPlayerId || now - player.lastSeen <= PEER_STALE_MS);
       if (fresh.length !== snapshot.players.length) setPlayers(fresh);
     }, HEARTBEAT_MS);
-  } else if (snapshot.transport === "websocket" && socket) {
+  } else if ((snapshot.transport === "websocket" && socket) || (snapshot.transport === "supabase" && realtimeChannel)) {
     heartbeatTimer = window.setInterval(() => {
       if (localPlayer) send("heartbeat", { player: { ...localPlayer, lastSeen: Date.now() } });
       publishHostLobby();
@@ -566,13 +491,10 @@ export function generateRoomCode() {
   return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
 }
 
-export function createRaceRoom(profile: PlayerProfile, carId: string, websocketUrl = "", settings: OnlineRaceSettings | null = null) {
-  let roomCode = generateRoomCode();
-  for (let attempt = 0; !websocketUrl && localRoomIsAvailable(roomCode) && attempt < 16; attempt++) {
-    roomCode = generateRoomCode();
-  }
-  if (!websocketUrl && localRoomIsAvailable(roomCode)) {
-    snapshot = { ...snapshot, error: "Could not reserve a unique local room code. Please try again." };
+export function createRaceRoom(profile: PlayerProfile, carId: string, websocketUrl = "", settings: OnlineRaceSettings | null = null, reservedRoomCode = generateRoomCode()) {
+  const roomCode = reservedRoomCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  if (roomCode.length !== 6) {
+    snapshot = { ...snapshot, error: "Could not reserve a valid room code. Please try again." };
     notify();
     return "";
   }
@@ -580,15 +502,11 @@ export function createRaceRoom(profile: PlayerProfile, carId: string, websocketU
   return roomCode;
 }
 
+/** The caller must validate and reserve the room through the server before connecting. */
 export function joinRaceRoom(rawCode: string, profile: PlayerProfile, carId: string, websocketUrl = "") {
   const roomCode = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
   if (roomCode.length !== 6) {
     snapshot = { ...snapshot, error: "Enter the six-character room code." };
-    notify();
-    return false;
-  }
-  if (!websocketUrl && !localRoomIsAvailable(roomCode)) {
-    snapshot = { ...snapshot, error: "Room not found in this browser preview. Open the host tab first or configure a multiplayer WebSocket server." };
     notify();
     return false;
   }
