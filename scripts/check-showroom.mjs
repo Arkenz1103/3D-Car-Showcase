@@ -116,6 +116,7 @@ assert.match(cityWorldSource, /new MeshStandardMaterial\(\{[^}]*fog \}\)/, "City
 assert.match(cityWorldSource, /position=\{\[-42, 72, -48\]\}/, "Daylight must illuminate the city-facing building fronts");
 assert.match(cityWorldSource, /const outside = driving && cityDrive\.z > 19/, "City lighting must wait until the camera has cleared the garage doorway");
 const mainMenuSource = fs.readFileSync("src/components/MainMenu.tsx", "utf8");
+const mainEntrySource = fs.readFileSync("src/main.tsx", "utf8");
 assert.match(appSource, /const \[mainMenuOpen, setMainMenuOpen\] = React\.useState\(true\)/, "The game should open on its main menu");
 assert.match(appSource, /!mainMenuOpen && \(startGameLoading \|\| \(o && !I\)\)/, "The loading screen must stay hidden until Start Game is pressed");
 assert.match(appSource, /\{gameStarted && \([\s\S]*?<Canvas/, "The showroom scene must not mount until Start Game is pressed");
@@ -123,6 +124,8 @@ assert.match(appSource, /const startGame = React\.useCallback\(\(\) => \{[\s\S]*
 const loadingScreenSource = fs.readFileSync("src/components/LoadingScreen.tsx", "utf8");
 const htmlSource = fs.readFileSync("index.html", "utf8");
 assert.match(htmlSource, /<title>CITY OF SPEEDRUNNERS<\/title>/, "The browser window title must use the new game branding");
+assert.match(htmlSource, /id="boot-screen"[^>]*role="status"[\s\S]*CITY OF SPEEDRUNNERS[\s\S]*Preparing the garage/, "A lightweight HTML loading shell should render before the application JavaScript downloads");
+assert.match(mainEntrySource, /function RemoveBootScreen\(\)[\s\S]*getElementById\("boot-screen"\)\?\.remove\(\)/, "The static loading shell should disappear after React mounts successfully");
 assert.match(htmlSource, /rel="preload" as="image" href="\/images\/city-of-speedrunners-loading-v2\.webp" fetchpriority="high"/, "The loading artwork must be preloaded before the screen renders");
 assert.match(loadingScreenSource, /LOADING_BACKGROUND_IMAGE = "\/images\/city-of-speedrunners-loading-v2\.webp"[\s\S]*new Image\(\)[\s\S]*image\.onload[\s\S]*setBackgroundReady\(true\)/, "The loading screen must gracefully preload the local artwork");
 assert.match(loadingScreenSource, /backgroundReady \? "opacity-100" : "opacity-0"[\s\S]*backgroundImage: `url\("\$\{LOADING_BACKGROUND_IMAGE\}"\)`[\s\S]*backgroundSize: "cover"[\s\S]*backgroundRepeat: "no-repeat"/, "The loading screen must reveal the versioned artwork as a single full-bleed image after it loads");
