@@ -54,11 +54,14 @@ assert(isBrakeLightSurface("Object_115", "lamp_rear_emitter"), "Aventador rear e
 assert(isBrakeLightSurface("Object_35", "rear_lights"), "McLaren rear-light mesh must be selected as a brake lamp");
 assert(!isBrakeLightSurface("Steering_Shift_LEDs_Manettino", "Taillight_Glass"), "SF90 steering LEDs must not light when braking");
 assert(!isBrakeLightSurface("Object_114", "lamp_rear_housing"), "Aventador lamp housings must not be mistaken for brake emitters");
-for (const [assetFile, expectedCount] of [["car-2.ts", 3], ["car-3.ts", 1], ["sf90-stradale.ts", 4]]) {
-  const source = fs.readFileSync(`src/assets/models/${assetFile}`, "utf8");
-  const base64 = source.match(/base64,([A-Za-z0-9+/=]+)/)?.[1];
-  assert(base64, `${assetFile} must remain an embedded GLB`);
-  const glb = Buffer.from(base64, "base64");
+const modelCatalogSource = fs.readFileSync("src/data/catalog.ts", "utf8");
+const viteConfigSource = fs.readFileSync("vite.config.ts", "utf8");
+assert.match(modelCatalogSource, /car-2\.glb\?url[\s\S]*car-3\.glb\?url[\s\S]*sf90-stradale\.glb\?url/, "3D models should be emitted as fetch-on-demand static assets, not embedded in the app JavaScript");
+assert.doesNotMatch(viteConfigSource, /viteSingleFile|vite-plugin-singlefile/, "Production builds should keep scripts and assets separately cacheable instead of inlining the entire site");
+assert.match(viteConfigSource, /manualChunks:[\s\S]*three-vendor[\s\S]*supabase-vendor/, "Large 3D and Supabase dependencies should be split into independently cacheable chunks");
+for (const [assetFile, expectedCount] of [["car-2.glb", 3], ["car-3.glb", 1], ["sf90-stradale.glb", 4]]) {
+  const glb = fs.readFileSync(`src/assets/models/${assetFile}`);
+  assert.equal(glb.toString("ascii", 0, 4), "glTF", `${assetFile} must be a valid binary GLB`);
   const jsonLength = glb.readUInt32LE(12);
   const gltf = JSON.parse(glb.subarray(20, 20 + jsonLength).toString().trim());
   const brakeSurfaceCount = gltf.nodes.reduce((count, node) => {
@@ -120,8 +123,8 @@ assert.match(appSource, /const startGame = React\.useCallback\(\(\) => \{[\s\S]*
 const loadingScreenSource = fs.readFileSync("src/components/LoadingScreen.tsx", "utf8");
 const htmlSource = fs.readFileSync("index.html", "utf8");
 assert.match(htmlSource, /<title>CITY OF SPEEDRUNNERS<\/title>/, "The browser window title must use the new game branding");
-assert.match(htmlSource, /rel="preload" as="image" href="\/images\/city-of-speedrunners-loading-v2\.png" fetchpriority="high"/, "The loading artwork must be preloaded before the screen renders");
-assert.match(loadingScreenSource, /LOADING_BACKGROUND_IMAGE = "\/images\/city-of-speedrunners-loading-v2\.png"[\s\S]*new Image\(\)[\s\S]*image\.onload[\s\S]*setBackgroundReady\(true\)/, "The loading screen must gracefully preload the local artwork");
+assert.match(htmlSource, /rel="preload" as="image" href="\/images\/city-of-speedrunners-loading-v2\.webp" fetchpriority="high"/, "The loading artwork must be preloaded before the screen renders");
+assert.match(loadingScreenSource, /LOADING_BACKGROUND_IMAGE = "\/images\/city-of-speedrunners-loading-v2\.webp"[\s\S]*new Image\(\)[\s\S]*image\.onload[\s\S]*setBackgroundReady\(true\)/, "The loading screen must gracefully preload the local artwork");
 assert.match(loadingScreenSource, /backgroundReady \? "opacity-100" : "opacity-0"[\s\S]*backgroundImage: `url\("\$\{LOADING_BACKGROUND_IMAGE\}"\)`[\s\S]*backgroundSize: "cover"[\s\S]*backgroundRepeat: "no-repeat"/, "The loading screen must reveal the versioned artwork as a single full-bleed image after it loads");
 assert.match(loadingScreenSource, /transition-opacity duration-700[\s\S]*isExiting \? "pointer-events-none opacity-0"/, "The loading overlay must fade out smoothly after completion");
 assert.match(loadingScreenSource, /CITY OF SPEEDRUNNERS[\s\S]*textShadow/, "The loading screen must prominently display the neon game title");
