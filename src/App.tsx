@@ -17,6 +17,7 @@ import { ENVIRONMENTS, RACE_DIFFICULTIES, RACE_MAPS, lockRaceConditions, raceSes
 import { selectRaceTrack } from "@/three/raceTrack";
 import { RaceHud } from "@/components/RaceHud";
 import { RaceMode } from "@/components/RaceMode";
+import { CircuitTrackArtwork } from "@/components/CircuitTrackArtwork";
 import { UserProfileBadge } from "@/components/UserProfileBadge";
 import { OnlineRaceCountdown } from "@/components/OnlineRaceCountdown";
 import { CityHud } from "@/components/CityHud";
@@ -64,7 +65,6 @@ import { LiftStatus } from "@/ui/LiftStatus";
 import { Canvas } from "@react-three/fiber";
 import {
   Box,
-  Building2,
   ChevronsUp,
   CircleAlert,
   CloudRain,
@@ -75,7 +75,6 @@ import {
   EyeOff,
   Flag,
   Lightbulb,
-  Map,
   Maximize2,
   Moon,
   MousePointerClick,
@@ -87,7 +86,6 @@ import {
   SlidersVertical,
   Sparkles,
   Upload,
-  Waves,
   Wind,
 } from "lucide-react";
 import React from "react";
@@ -1636,20 +1634,8 @@ export function App() {
                 <span className="font-mono-tech text-[10px] uppercase tracking-wider text-zinc-500">3 routes</span>
               </div>
               <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                {RACE_MAPS.map((map, index) => {
-                  const Icon = index === 0 ? Map : index === 1 ? Waves : Building2;
+                {RACE_MAPS.map((map) => {
                   const selected = raceSetupMap === map.id;
-                  const landscape = index === 0
-                    ? "linear-gradient(135deg, rgba(220,26,34,.45), rgba(13,16,24,.35) 58%, rgba(245,197,24,.16))"
-                    : index === 1
-                      ? "linear-gradient(135deg, rgba(30,142,185,.45), rgba(13,16,24,.35) 58%, rgba(50,200,170,.18))"
-                      : "linear-gradient(135deg, rgba(126,91,45,.42), rgba(13,16,24,.35) 58%, rgba(56,189,248,.18))";
-                  const routeShape = index === 0
-                    ? "M24 28 L164 28 Q188 28 190 47 L182 68 Q178 78 158 78 L137 78 L128 88 L80 88 L49 80 Q31 76 27 59 Z"
-                    : index === 1
-                      ? "M24 38 C39 18 59 19 77 27 C99 37 106 13 130 17 C153 20 157 41 180 34 C202 27 204 51 183 57 C161 63 174 81 151 79 C127 77 119 58 96 63 C71 69 64 84 43 72 C24 62 13 51 24 38 Z"
-                      : "M25 22 L173 22 L194 39 L192 63 L171 78 L132 78 L119 65 L79 65 L72 82 L40 78 L23 57 L39 43 Z";
-                  const routeStart = index === 0 ? [24, 28] : index === 1 ? [24, 38] : [25, 22];
                   return (
                     <button
                       key={map.id}
@@ -1657,15 +1643,8 @@ export function App() {
                       onClick={() => setRaceSetupMap(map.id)}
                       aria-pressed={selected}
                       className={`overflow-hidden rounded-2xl border text-left transition-all cursor-pointer ${selected ? "border-[#F5C518] bg-[#F5C518]/[0.07] shadow-[0_0_26px_rgba(245,197,24,0.1)]" : "border-white/10 bg-black/25 hover:border-white/30"}`}
-      >
-                      <div className="relative flex h-16 items-end justify-between overflow-hidden p-3" style={{ background: landscape }}>
-                        <svg className="absolute inset-0 h-full w-full opacity-75" viewBox="0 0 220 96" fill="none" aria-hidden="true">
-                          <path d={routeShape} stroke={selected ? "#F5C518" : "#FFFFFF"} strokeOpacity="0.82" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                          <circle cx={routeStart[0]} cy={routeStart[1]} r="3.5" fill={selected ? "#F5C518" : "#FFFFFF"} />
-                        </svg>
-                        <Icon className={`relative z-10 h-6 w-6 ${selected ? "text-[#F5C518]" : "text-white/80"}`} />
-                        <span className="relative rounded-full bg-black/45 px-2 py-1 font-mono-tech text-[9px] uppercase tracking-wider text-white/80">{map.region}</span>
-                      </div>
+                    >
+                      <CircuitTrackArtwork map={map} selected={selected} />
                       <div className="p-3">
                         <div className="font-display text-sm font-semibold text-white">{map.name}</div>
                         <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-zinc-400">{map.description}</p>

@@ -9,10 +9,12 @@ The game can be played as a tab-scoped guest without Supabase. Sign-up, sign-in,
 
    ```dotenv
    VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-   VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
+   VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
+   # Or keep using the legacy name:
+   # VITE_SUPABASE_ANON_KEY=YOUR_LEGACY_ANON_KEY
    ```
 
-   These are browser-safe public values. **Never put the service-role key in a `VITE_` variable or in the browser.** Restart the Vite server after changing environment variables.
+   These are browser-safe public values. **Never put the service-role key in a `VITE_` variable or in the browser.** Restart the Vite server after changing environment variables. For Vercel, add the URL and publishable key to every deployment environment you use (Production and Preview at minimum), then redeploy; Vite embeds these values at build time.
 
 3. In Supabase Authentication → URL Configuration, add the local development URL (usually `http://localhost:5173`) and the eventual deployed site URL to the allowed redirect URLs. Configure email/password sign-up and decide whether email confirmation should be enabled. If confirmation is enabled, sign-up returns to the sign-in flow until the player verifies their email.
 

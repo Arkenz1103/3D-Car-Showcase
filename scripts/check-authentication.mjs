@@ -4,12 +4,13 @@ import vm from "node:vm";
 import ts from "typescript";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [garageSaveSource, authGateway, mainMenu, profileBadge, authService, migration, usernameFunction, app] = await Promise.all([
+const [garageSaveSource, authGateway, mainMenu, profileBadge, authService, supabaseSource, migration, usernameFunction, app] = await Promise.all([
   read("src/lib/garageSave.ts"),
   read("src/components/AuthGateway.tsx"),
   read("src/components/MainMenu.tsx"),
   read("src/components/UserProfileBadge.tsx"),
   read("src/lib/authService.ts"),
+  read("src/lib/supabase.ts"),
   read("supabase/migrations/202611050001_auth_profiles_and_cloud_saves.sql"),
   read("supabase/functions/username-login/index.ts"),
   read("src/App.tsx"),
@@ -67,5 +68,59 @@ assert.match(authService, /client\.rpc\("is_username_available"/, "The UI should
 assert.match(authService, /functions\.invoke\("username-login"/, "Username sign-in should use the server-side lookup function");
 assert.match(usernameFunction, /SUPABASE_SERVICE_ROLE_KEY[\s\S]*signInWithPassword/, "The service-role key should stay in the Edge Function while Supabase Auth checks the password");
 assert.match(app, /storeGuestGarageSave\(garageSaveData\)/, "Active guest garage changes should be persisted to the tab session");
+assert.match(supabaseSource, /isSupportedPublicKey[\s\S]*sb_publishable_[\s\S]*auth\/v1\/settings/, "Supabase initialization should validate publishable/legacy key formats and verify the key against the Auth endpoint");
+assert.match(authService, /client\.auth\.getSession\(\)[\s\S]*session\?\.access_token[\s\S]*client\.auth\.getUser\(session\.access_token\)/, "Session restoration should check for tokens before requesting the authenticated user");
+assert.match(authService, /export async function signOutAccount\(\)[\s\S]*if \(!data\.session\)[\s\S]*clearLocalSession/, "Guest sign-out should safely handle a missing session without propagating AuthSessionMissingError");
 
-console.log("PASS: guest session saves, auth entry choices, username uniqueness, account linking, and cloud access controls.");
+const authServiceJavascript = ts.transpile(authService, {
+  module: ts.ModuleKind.CommonJS,
+  target: ts.ScriptTarget.ES2020,
+});
+function createAuthService(mockClient, verify = async () => ({ valid: true })) {
+  const module = { exports: {} };
+  const mockRequire = (specifier) => {
+    if (specifier === "@/lib/garageSave") return {
+      mergeGarageSaves: (left, right) => right ?? left,
+      normalizeGarageSave: (value) => value ?? {},
+    };
+    if (specifier === "@/lib/supabase") return {
+      supabase: mockClient,
+      supabaseConfigured: Boolean(mockClient),
+      supabaseConfigurationError: "Supabase is not configured.",
+      verifySupabaseCredentials: verify,
+    };
+    throw new Error(`Unexpected auth-service dependency: ${specifier}`);
+  };
+  vm.runInNewContext(authServiceJavascript, {
+    module,
+    exports: module.exports,
+    require: mockRequire,
+  });
+  return module.exports;
+}
+
+let guestGetUserCalls = 0;
+let guestSignOutCalls = 0;
+const guestAuth = createAuthService({ auth: {
+  getSession: async () => ({ data: { session: null }, error: null }),
+  getUser: async () => { guestGetUserCalls += 1; throw new Error("Must not request a user without a session"); },
+  signOut: async () => {
+    guestSignOutCalls += 1;
+    return { error: { name: "AuthSessionMissingError", message: "Auth session missing!" } };
+  },
+} });
+assert.equal(await guestAuth.restoreCurrentAccount(), null, "Guest startup with no session should resolve to a normal signed-out state");
+assert.equal(guestGetUserCalls, 0, "Guest startup must not call getUser without an access token");
+await assert.doesNotReject(() => guestAuth.signOutAccount(), "Guest sign-out should absorb the missing-session response");
+assert.equal(guestSignOutCalls, 1, "Guest sign-out should still clear any locally persisted session state");
+
+let invalidCredentialUserCalls = 0;
+const invalidCredentialAuth = createAuthService({ auth: {
+  getSession: async () => ({ data: { session: { access_token: "access", refresh_token: "refresh" } }, error: null }),
+  getUser: async () => { invalidCredentialUserCalls += 1; return { data: { user: null }, error: null }; },
+  signOut: async () => ({ error: null }),
+} }, async () => ({ valid: false, reason: "rejected", message: "Invalid key" }));
+assert.equal(await invalidCredentialAuth.restoreCurrentAccount(), null, "Invalid environment credentials should quietly fall back to guest mode during restoration");
+assert.equal(invalidCredentialUserCalls, 0, "A user lookup should not run until environment credentials have been verified");
+
+console.log("PASS: guest session saves, missing-token recovery, credential verification, auth entry choices, username uniqueness, account linking, and cloud access controls.");

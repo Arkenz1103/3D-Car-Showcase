@@ -1,5 +1,5 @@
 import { generateRoomCode, type PublicLobby } from "@/lib/multiplayer";
-import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { supabase, supabaseConfigurationError, supabaseConfigured } from "@/lib/supabase";
 
 type RoomRow = {
   room_code: string;
@@ -22,7 +22,7 @@ type CreatePublicRoomOptions = {
 
 function requireDatabase() {
   if (!supabaseConfigured || !supabase) {
-    throw new Error("Cross-device lobbies need Supabase configured. Add the project URL and anon key, then apply the rooms migration.");
+    throw new Error(`Cross-device lobbies are unavailable. ${supabaseConfigurationError || "Check the Supabase project URL and public key, then apply the rooms migration."} The public room registry requires the rooms migration.`);
   }
   return supabase;
 }

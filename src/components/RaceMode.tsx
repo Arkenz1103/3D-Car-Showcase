@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { type MultiplayerSnapshot, type OnlineRaceSettings, type PublicLobby, type RoomPlayer } from "@/lib/multiplayer";
 import { discoverPublicLobbies } from "@/lib/publicRoomDirectory";
 import { renderVehicleThumbnails } from "@/lib/vehicleThumbnails";
+import { CircuitTrackArtwork } from "@/components/CircuitTrackArtwork";
 
 type MatchSelection = Pick<OnlineRaceSettings, "mapId" | "environment">;
 type RaceModeProps = {
@@ -98,9 +99,27 @@ function SettingsDialog({
           <fieldset>
             <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">01 · Circuit</legend>
             <div className="grid gap-2 sm:grid-cols-3">
-              {maps.map((map) => <button type="button" key={map.id} aria-pressed={value.mapId === map.id} onClick={() => onChange({ ...value, mapId: map.id })} className={`rounded-xl border p-3 text-left transition-colors ${value.mapId === map.id ? "border-[#F5C518]/55 bg-[#F5C518]/[.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}>
-                <span className="block font-display text-sm font-semibold text-white">{map.name}</span><span className="mt-1 block font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{map.region}</span><span className="mt-2 block line-clamp-2 text-[10px] leading-relaxed text-zinc-500">{map.description}</span>
-              </button>)}
+              {maps.map((map) => {
+                const selected = value.mapId === map.id;
+                return (
+                  <button
+                    type="button"
+                    key={map.id}
+                    aria-pressed={selected}
+                    onClick={() => onChange({ ...value, mapId: map.id })}
+                    className={`overflow-hidden rounded-2xl border text-left transition-all ${selected ? "border-[#F5C518] bg-[#F5C518]/[0.07] shadow-[0_0_26px_rgba(245,197,24,0.1)]" : "border-white/10 bg-black/25 hover:border-white/30"}`}
+                  >
+                    <CircuitTrackArtwork map={map} selected={selected} />
+                    <div className="p-3">
+                      <div className="font-display text-sm font-semibold text-white">{map.name}</div>
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-zinc-400">{map.description}</p>
+                      <div className={`mt-2 font-mono-tech text-[9px] uppercase tracking-[0.18em] ${selected ? "text-[#F5C518]" : "text-zinc-600"}`}>
+                        {selected ? "Selected circuit" : "Choose circuit"}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </fieldset>
           <fieldset>
@@ -250,7 +269,8 @@ function PublicLobbyBrowser({
       }
     } catch (reason) {
       if (request === directoryRequest.current) {
-        setPublicLobbies([]);
+        // Keep the last successful directory response visible during a temporary
+        // Supabase outage; joining still revalidates the code with the backend.
         setDirectoryError(reason instanceof Error ? reason.message : "Could not connect to the lobby database.");
       }
     } finally {
