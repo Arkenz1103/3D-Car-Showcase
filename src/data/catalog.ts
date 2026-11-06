@@ -1,7 +1,7 @@
 // @ts-nocheck
-import CAR2_GLB_URL from "@/assets/models/car-2";
-import CAR3_GLB_URL from "@/assets/models/car-3";
-import SF90_GLB_URL from "@/assets/models/sf90-stradale";
+import CAR2_GLB_URL from "@/assets/models/car-2.glb?url";
+import CAR3_GLB_URL from "@/assets/models/car-3.glb?url";
+import SF90_GLB_URL from "@/assets/models/sf90-stradale.glb?url";
 
 export const PAINT_COLORS = [
   {
