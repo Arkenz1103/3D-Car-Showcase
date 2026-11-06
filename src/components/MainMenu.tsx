@@ -1,4 +1,7 @@
 import React from "react";
+import { AuthGateway } from "@/components/AuthGateway";
+import type { AccountProfile } from "@/lib/authService";
+import type { GarageSaveData } from "@/lib/garageSave";
 import {
   ArrowLeft,
   LogOut,
@@ -21,7 +24,9 @@ type MainMenuProps = {
   lightsOn: boolean;
   autoOrbit: boolean;
   graphicsQuality: GraphicsQuality;
-  onStart: () => void;
+  onStart: () => void | Promise<void>;
+  guestSaveData?: GarageSaveData;
+  onAuthenticated: (account: AccountProfile) => void | Promise<void>;
   onResume?: () => void;
   onQuit: () => void;
   onQuitToTitle?: () => void;
@@ -74,6 +79,8 @@ export function MainMenu({
   autoOrbit,
   graphicsQuality,
   onStart,
+  guestSaveData,
+  onAuthenticated,
   onResume,
   onQuit,
   onQuitToTitle,
@@ -82,12 +89,15 @@ export function MainMenu({
   onToggleOrbit,
   onGraphicsQualityChange,
 }: MainMenuProps) {
-  const [screen, setScreen] = React.useState<"home" | "settings" | "quit">("home");
+  const [screen, setScreen] = React.useState<"home" | "settings" | "quit" | "auth">("home");
 
   const beginGame = () => {
-    setScreen("home");
-    if (mode === "pause") onResume?.();
-    else onStart();
+    if (mode === "pause") {
+      setScreen("home");
+      onResume?.();
+    } else {
+      setScreen("auth");
+    }
   };
   const quitFromMenu = () => {
     if (mode === "pause") {
@@ -112,7 +122,7 @@ export function MainMenu({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-[#030406]/82 px-4 py-6 backdrop-blur-md sm:px-8" role="dialog" aria-modal="true" aria-labelledby={screen === "home" ? mode === "pause" ? "pause-menu-title" : "main-menu-title" : screen === "settings" ? "settings-title" : "quit-title"}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-[#030406]/82 px-4 py-6 backdrop-blur-md sm:px-8" role="dialog" aria-modal="true" aria-labelledby={screen === "auth" ? "auth-gateway-title" : screen === "home" ? mode === "pause" ? "pause-menu-title" : "main-menu-title" : screen === "settings" ? "settings-title" : "quit-title"}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute -left-32 top-1/4 h-80 w-80 rounded-full bg-[#DC1A22]/10 blur-[110px]" />
         <div className="absolute -right-20 bottom-0 h-96 w-96 rounded-full bg-[#F5C518]/[0.06] blur-[130px]" />
@@ -144,6 +154,23 @@ export function MainMenu({
             </button>
           </div>
         </main>
+      )}
+
+      {screen === "auth" && mode === "title" && (
+        <AuthGateway
+          open
+          mode="start"
+          guestSaveData={guestSaveData}
+          onClose={() => setScreen("home")}
+          onContinueGuest={async () => {
+            await onStart();
+            setScreen("home");
+          }}
+          onAuthenticated={async (account) => {
+            await onAuthenticated(account);
+            setScreen("home");
+          }}
+        />
       )}
 
       {screen === "settings" && (

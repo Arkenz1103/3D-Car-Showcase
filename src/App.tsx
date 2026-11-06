@@ -42,7 +42,10 @@ import {
   updateLobbySettings,
   updateLocalPlayer,
 } from "@/lib/multiplayer";
-import { loadPlayerProfile, savePlayerProfile } from "@/lib/playerProfile";
+import { clearGuestProfile, createGuestProfile, DEFAULT_PROFILE, loadPlayerProfile, normalizeDisplayName, savePlayerProfile } from "@/lib/playerProfile";
+import { loadGuestGarageSave, storeGuestGarageSave, clearGuestGarageSave, normalizeGarageSave } from "@/lib/garageSave";
+import { restoreCurrentAccount, saveAccountProgress, signOutAccount, type AccountProfile } from "@/lib/authService";
+import { supabaseConfigured } from "@/lib/supabase";
 import { LiftDirector } from "@/three/LiftDirector";
 import { RaceCircuit, warmRaceCircuit } from "@/three/RaceCircuit";
 import { RaceOpponents } from "@/three/RaceOpponents";
@@ -173,11 +176,11 @@ export function App() {
     [neonLightsOn, setNeonLightsOn] = React.useState(false),
     [garageMusicOn, setGarageMusicOn] = React.useState(false);
   const [playerProfile, setPlayerProfile] = React.useState(loadPlayerProfile);
+  const [account, setAccount] = React.useState<AccountProfile | null>(null);
   const [raceModeType, setRaceModeType] = React.useState<"single" | "online">("single");
   // Parent-owned room snapshot survives RaceMode tab changes; RaceMode only renders this state.
   const [multiplayerSnapshot, setMultiplayerSnapshot] = React.useState(getMultiplayerSnapshot());
   const [pendingOnlineStart, setPendingOnlineStart] = React.useState(null);
-  const [createSettingsRequest, setCreateSettingsRequest] = React.useState(0);
   const [liftStartRequested, setLiftStartRequested] = React.useState(false);
   const [mainMenuOpen, setMainMenuOpen] = React.useState(true);
   const [pauseMenuOpen, setPauseMenuOpen] = React.useState(false);
@@ -186,13 +189,14 @@ export function App() {
   const [startGameLoading, setStartGameLoading] = React.useState(false);
   const [graphicsQuality, setGraphicsQuality] = React.useState(() => {
     try {
-      const saved = window.localStorage.getItem("maranello-graphics-quality");
+      const saved = window.sessionStorage.getItem("maranello-graphics-quality");
       return saved === "low" || saved === "high" ? saved : "standard";
     } catch {
       return "standard";
     }
   });
   const requestSequence = React.useRef(0);
+  const authChoiceMadeRef = React.useRef(false);
   const garageSoundtrackRef = React.useRef<GarageSoundtrackHandle>(null);
   const raceTransitionTimer = React.useRef(null);
   const raceLightsRef = React.useRef(false);
@@ -214,11 +218,83 @@ export function App() {
     setRaceSetupEnvironment(settings.environment);
     setRaceSetupDifficulty("normal");
   }, [multiplayerSnapshot.settings?.mapId, multiplayerSnapshot.settings?.environment, multiplayerSnapshot.isHost]);
+  const applyGarageSaveData = React.useCallback((value: unknown) => {
+    const saved = normalizeGarageSave(value);
+    const selectedCarId = CARS.some((car) => car.id === saved.selectedCarId) ? saved.selectedCarId : CARS[0]?.id ?? "sf90";
+    const raceMapId = RACE_MAPS.some((map) => map.id === saved.settings.raceMapId) ? saved.settings.raceMapId : RACE_MAPS[0].id;
+    A(selectedCarId);
+    X(saved.customization.paintHex);
+    gA(PAINT_FINISHES.find((finish) => finish.id === saved.customization.paintFinishId) ?? PAINT_FINISHES[0]);
+    AA(WHEEL_SWATCHES.find((swatch) => swatch.id === saved.customization.wheelSwatchId) ?? WHEEL_SWATCHES[0]);
+    R(CALIPER_SWATCHES.find((swatch) => swatch.id === saved.customization.caliperSwatchId) ?? CALIPER_SWATCHES[0]);
+    IA(INTERIOR_SWATCHES.find((swatch) => swatch.id === saved.customization.interiorSwatchId) ?? INTERIOR_SWATCHES[0]);
+    DA(saved.customization.matteCarbon);
+    wA(STUDIO_THEMES.find((theme) => theme.id === saved.customization.studioThemeId) ?? STUDIO_THEMES[0]);
+    setGraphicsQuality(saved.settings.graphicsQuality);
+    setGarageLightsOn(saved.settings.garageLightsOn);
+    XA(saved.settings.vehicleLightsOn);
+    setNeonLightsOn(saved.settings.neonLightsOn);
+    W(saved.settings.autoOrbit);
+    setRaceSetupMap(raceMapId);
+    setRaceSetupEnvironment(saved.settings.raceEnvironment);
+    setRaceSetupDifficulty(saved.settings.raceDifficulty);
+  }, []);
+  const garageSaveData = React.useMemo(() => normalizeGarageSave({
+    version: 1,
+    garageCarIds: CARS.map((car) => car.id),
+    selectedCarId: Q,
+    customization: {
+      paintHex: m,
+      paintFinishId: L?.id,
+      wheelSwatchId: QA?.id,
+      caliperSwatchId: CA?.id,
+      interiorSwatchId: z?.id,
+      studioThemeId: H?.id,
+      matteCarbon: iA,
+    },
+    settings: {
+      graphicsQuality,
+      garageLightsOn,
+      vehicleLightsOn: Tg,
+      neonLightsOn,
+      autoOrbit: N,
+      raceMapId: raceSetupMap,
+      raceEnvironment: raceSetupEnvironment,
+      raceDifficulty: raceSetupDifficulty,
+    },
+  }), [Q, m, L?.id, QA?.id, CA?.id, z?.id, H?.id, iA, graphicsQuality, garageLightsOn, Tg, neonLightsOn, N, raceSetupMap, raceSetupEnvironment, raceSetupDifficulty]);
+  React.useEffect(() => {
+    applyGarageSaveData(loadGuestGarageSave());
+  }, [applyGarageSaveData]);
+  React.useEffect(() => {
+    if (!supabaseConfigured) return;
+    let cancelled = false;
+    void restoreCurrentAccount().then((restored) => {
+      if (cancelled || authChoiceMadeRef.current || !restored) return;
+      setAccount(restored);
+      setPlayerProfile(restored.profile);
+      applyGarageSaveData(restored.saveData);
+    }).catch((error) => console.warn("Could not restore the signed-in cloud profile:", error));
+    return () => { cancelled = true; };
+  }, [applyGarageSaveData]);
+  React.useEffect(() => {
+    if (!gameStarted) return;
+    if (!account) {
+      savePlayerProfile(playerProfile);
+      storeGuestGarageSave(garageSaveData);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void saveAccountProgress(account.userId, playerProfile, garageSaveData).catch((error) => console.warn("Cloud save failed:", error));
+    }, 650);
+    return () => window.clearTimeout(timer);
+  }, [account, gameStarted, garageSaveData, playerProfile]);
   const saveProfile = React.useCallback((nextProfile) => {
-    const saved = savePlayerProfile(nextProfile);
+    const saved = { ...nextProfile, displayName: normalizeDisplayName(nextProfile.displayName) };
     setPlayerProfile(saved);
+    if (!account) savePlayerProfile(saved);
     updateLocalPlayer(saved, Q);
-  }, [Q]);
+  }, [account, Q]);
   const chooseRaceMode = React.useCallback((mode) => {
     // Keep an established lobby connected while the player browses the other mode;
     // returning to Online Multiplayer should restore this same room.
@@ -261,7 +337,7 @@ export function App() {
   }, [multiplayerSnapshot.players, multiplayerSnapshot.localPlayerId]);
   React.useEffect(() => {
     try {
-      window.localStorage.setItem("maranello-graphics-quality", graphicsQuality);
+      window.sessionStorage.setItem("maranello-graphics-quality", graphicsQuality);
     } catch {
       // Quality selection still works for this session when storage is blocked.
     }
@@ -813,6 +889,33 @@ export function App() {
     setMainMenuOpen(false);
     void unlockAudioFromGesture();
   }, []);
+  const continueAsGuest = React.useCallback(() => {
+    authChoiceMadeRef.current = true;
+    if (supabaseConfigured) void signOutAccount().catch(() => { /* A guest session can still start offline. */ });
+    setAccount(null);
+    const previousGuest = loadPlayerProfile();
+    const guestProfile = previousGuest.displayName !== DEFAULT_PROFILE.displayName ? previousGuest : createGuestProfile();
+    setPlayerProfile(guestProfile);
+    const guestSave = loadGuestGarageSave();
+    applyGarageSaveData(guestSave);
+    storeGuestGarageSave(guestSave);
+    startGame();
+  }, [applyGarageSaveData, startGame]);
+  const enterWithAccount = React.useCallback((signedInAccount: AccountProfile) => {
+    authChoiceMadeRef.current = true;
+    setAccount(signedInAccount);
+    setPlayerProfile(signedInAccount.profile);
+    applyGarageSaveData(signedInAccount.saveData);
+    startGame();
+  }, [applyGarageSaveData, startGame]);
+  const finishLinkingAccount = React.useCallback((linkedAccount: AccountProfile) => {
+    authChoiceMadeRef.current = true;
+    setAccount(linkedAccount);
+    setPlayerProfile(linkedAccount.profile);
+    applyGarageSaveData(linkedAccount.saveData);
+    clearGuestProfile();
+    clearGuestGarageSave();
+  }, [applyGarageSaveData]);
   const finishStartGameLoading = React.useCallback(() => {
     setStartGameLoading(false);
   }, []);
@@ -1128,7 +1231,13 @@ export function App() {
             </nav>
 
             <div className="pointer-events-auto flex shrink-0 items-center gap-1.5">
-              <UserProfileBadge profile={playerProfile} onSave={saveProfile} />
+              <UserProfileBadge
+                profile={playerProfile}
+                isGuest={!account}
+                guestSaveData={garageSaveData}
+                onSave={saveProfile}
+                onAuthenticated={finishLinkingAccount}
+              />
               <details
                 className="relative"
                 onKeyDown={(event) => {
@@ -1416,11 +1525,11 @@ export function App() {
           mode={raceModeType}
           onModeChange={chooseRaceMode}
           room={multiplayerSnapshot}
+          websocketUrl={MULTIPLAYER_WS_URL}
           cars={CARS.map(({ id, brand, model, shortTitle, accentHex }) => ({ id, brand, model, shortTitle, accentHex }))}
           maps={RACE_MAPS}
           environments={MULTIPLAYER_ENVIRONMENTS}
           initialSettings={{ mapId: raceSetupMap, environment: raceSetupEnvironment }}
-          createSettingsRequest={createSettingsRequest}
           selectedCarId={Q}
           onCarChange={A}
           onCreateRoom={createOnlineRoom}
@@ -1440,13 +1549,7 @@ export function App() {
                   onClick={() => setRaceSetupOpen(false)}
                   className="atelier-pill rounded-xl px-4 py-2.5 font-mono-tech text-[10px] uppercase tracking-wider text-zinc-300 hover:text-white cursor-pointer"
                 >Cancel</button>
-                {raceModeType === "online" && !multiplayerSnapshot.roomCode ? (
-                  <button
-                    type="button"
-                    onClick={() => setCreateSettingsRequest((request) => request + 1)}
-                    className="flex items-center gap-2 rounded-xl border border-sky-300/45 bg-sky-300/15 px-5 py-2.5 font-mono-tech text-[10px] font-bold uppercase tracking-[0.16em] text-sky-100 shadow-[0_0_24px_rgba(56,189,248,0.16)] transition-colors hover:bg-sky-300/25 cursor-pointer"
-                  ><Plus className="h-3.5 w-3.5" /> Create Room</button>
-                ) : raceModeType === "online" && !multiplayerSnapshot.isHost ? (
+                {raceModeType === "online" && !multiplayerSnapshot.roomCode ? null : raceModeType === "online" && !multiplayerSnapshot.isHost ? (
                   <span className="font-mono-tech text-[9px] uppercase tracking-wider text-sky-200/70">Waiting for Room Leader</span>
                 ) : (
                   <button
@@ -1586,7 +1689,9 @@ export function App() {
         lightsOn={garageLightsOn}
         autoOrbit={N}
         graphicsQuality={graphicsQuality}
-        onStart={startGame}
+        onStart={continueAsGuest}
+        guestSaveData={garageSaveData}
+        onAuthenticated={enterWithAccount}
         onQuit={quitGame}
         onToggleMusic={toggleGarageMusic}
         onToggleLights={toggleGarageLights}
@@ -1600,7 +1705,9 @@ export function App() {
         lightsOn={garageLightsOn}
         autoOrbit={N}
         graphicsQuality={graphicsQuality}
-        onStart={startGame}
+        onStart={continueAsGuest}
+        guestSaveData={garageSaveData}
+        onAuthenticated={enterWithAccount}
         onResume={resumeGame}
         onQuit={quitGame}
         onQuitToTitle={quitToMainMenu}

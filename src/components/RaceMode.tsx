@@ -1,7 +1,7 @@
-import { Check, Clipboard, CloudSun, Cpu, Crown, Flag, Globe2, Link2, LogOut, Pencil, Radio } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, Clipboard, CloudSun, Cpu, Crown, Flag, Globe2, Link2, LockKeyhole, LogOut, MapPin, Pencil, Plus, Radio, RefreshCw, Search, Users } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { MultiplayerSnapshot, OnlineRaceSettings, RoomPlayer } from "@/lib/multiplayer";
+import { discoverPublicLobbies, type MultiplayerSnapshot, type OnlineRaceSettings, type PublicLobby, type RoomPlayer } from "@/lib/multiplayer";
 import { renderVehicleThumbnails } from "@/lib/vehicleThumbnails";
 
 type MatchSelection = Pick<OnlineRaceSettings, "mapId" | "environment">;
@@ -12,11 +12,11 @@ type RaceModeProps = {
   children?: ReactNode;
   footer?: ReactNode;
   room: MultiplayerSnapshot;
+  websocketUrl?: string;
   cars: { id: string; brand: string; model: string; shortTitle: string; accentHex: string }[];
   maps: { id: string; name: string; region: string; description: string }[];
   environments: { id: string; label: string; subtitle: string }[];
   initialSettings: MatchSelection;
-  createSettingsRequest: number;
   selectedCarId: string;
   onCarChange: (carId: string) => void;
   onCreateRoom: (settings: MatchSelection) => boolean;
@@ -71,7 +71,7 @@ function SettingsDialog({
   onClose,
   errorMessage,
 }: {
-  kind: "create" | "edit";
+  kind: "configure" | "create" | "edit";
   value: MatchSelection;
   onChange: (value: MatchSelection) => void;
   maps: RaceModeProps["maps"];
@@ -87,14 +87,14 @@ function SettingsDialog({
       <section role="dialog" aria-modal="true" aria-labelledby="room-settings-title" className="atelier-panel mx-auto my-2 w-full max-w-3xl rounded-3xl border border-white/12 p-5 shadow-[0_30px_120px_rgba(0,0,0,.75)] sm:p-7" onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="font-mono-tech text-[9px] uppercase tracking-[.2em] text-sky-200">{kind === "create" ? "Room setup · confirmation" : "Room setup · match rules"}</div>
-            <h3 id="room-settings-title" className="mt-1 font-display text-xl font-bold text-white">{kind === "create" ? "Create this room?" : "Edit match settings"}</h3>
-            {kind === "edit" && <p className="mt-1 text-xs text-zinc-500">Choose the circuit and time/weather conditions for everyone in this lobby.</p>}
+            <div className="font-mono-tech text-[9px] uppercase tracking-[.2em] text-sky-200">{kind === "create" ? "Room setup · confirmation" : kind === "configure" ? "Room setup · customize" : "Room setup · match rules"}</div>
+            <h3 id="room-settings-title" className="mt-1 font-display text-xl font-bold text-white">{kind === "create" ? "Create this room?" : kind === "configure" ? "Customize your lobby" : "Edit match settings"}</h3>
+            {kind !== "create" && <p className="mt-1 text-xs text-zinc-500">Choose the circuit and time/weather conditions for this lobby.</p>}
           </div>
-          {kind === "edit" && <button type="button" onClick={onClose} aria-label="Close match settings" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-xl text-zinc-400 hover:bg-white/5 hover:text-white">×</button>}
+          {kind !== "create" && <button type="button" onClick={onClose} aria-label="Close match settings" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-xl text-zinc-400 hover:bg-white/5 hover:text-white">×</button>}
         </div>
 
-        {kind === "edit" ? (
+        {kind !== "create" ? (
           <div className="mt-5 space-y-5">
             <fieldset>
               <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">01 · Map</legend>
@@ -139,7 +139,7 @@ function SettingsDialog({
         {errorMessage && <div role="alert" className="mt-4 rounded-lg border border-red-400/25 bg-red-400/[.06] px-3 py-2 text-xs text-red-200">{errorMessage}</div>}
         <div className="mt-6 flex flex-col-reverse gap-2.5 border-t border-white/10 pt-5 sm:flex-row sm:justify-end sm:gap-3">
           <button type="button" onClick={onClose} className="min-h-11 rounded-xl border border-white/12 bg-white/[.03] px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.16em] text-zinc-300 transition-colors hover:bg-white/[.08] hover:text-white">CANCEL</button>
-          <button type="button" onClick={onConfirm} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25">{kind === "create" ? "CONFIRM & CREATE ROOM" : "SAVE MATCH SETTINGS"}</button>
+          <button type="button" onClick={onConfirm} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25">{kind === "create" ? "CONFIRM & CREATE ROOM" : kind === "configure" ? "REVIEW LOBBY" : "SAVE MATCH SETTINGS"}</button>
         </div>
       </section>
     </div>,
@@ -188,6 +188,175 @@ function LeaveLobbyDialog({
   );
 }
 
+function PrivateLobbyDialog({
+  onClose,
+  onJoin,
+}: {
+  onClose: () => void;
+  onJoin: (code: string) => void;
+}) {
+  const [code, setCode] = useState("");
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (code.length === 6) onJoin(code);
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-[2147483001] grid place-items-center bg-[#020408]/88 px-4 py-6 backdrop-blur-md" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="private-lobby-title" className="atelier-panel w-full max-w-md rounded-3xl border border-white/12 p-6 shadow-[0_30px_120px_rgba(0,0,0,.75)]" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-sky-300/20 bg-sky-300/10 text-sky-100"><LockKeyhole className="h-4 w-4" /></span>
+          <div><div className="font-mono-tech text-[9px] uppercase tracking-[.2em] text-sky-200">Private room access</div><h3 id="private-lobby-title" className="mt-1 font-display text-xl font-bold text-white">Find Private Lobby</h3><p className="mt-1 text-xs leading-relaxed text-zinc-400">Enter the six-character invite code provided by the host.</p></div>
+        </div>
+        <form className="mt-5" onSubmit={submit}>
+          <label htmlFor="private-lobby-code" className="font-mono-tech text-[9px] uppercase tracking-[.16em] text-zinc-400">Room code</label>
+          <input id="private-lobby-code" autoFocus required minLength={6} maxLength={6} value={code} onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} placeholder="A7K4Q2" className="mt-1.5 w-full rounded-xl border border-white/12 bg-black/40 px-3 py-3 font-mono-tech text-lg uppercase tracking-[.28em] text-white outline-none focus:border-sky-300/60" />
+          <div className="mt-5 flex justify-end gap-2 border-t border-white/10 pt-4">
+            <button type="button" onClick={onClose} className="rounded-xl border border-white/12 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-zinc-300 hover:bg-white/[.06]">Cancel</button>
+            <button type="submit" disabled={code.length !== 6} className="flex items-center gap-2 rounded-xl border border-sky-300/35 bg-sky-300/15 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-sky-100 hover:bg-sky-300/25 disabled:cursor-not-allowed disabled:opacity-40"><Link2 className="h-3.5 w-3.5" /> Join Lobby</button>
+          </div>
+        </form>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+type PublicLobbyBrowserProps = {
+  websocketUrl: string;
+  maps: RaceModeProps["maps"];
+  environments: RaceModeProps["environments"];
+  error: string | null;
+  activeRoomCode: string | null;
+  privateLobbyOpen: boolean;
+  onOpenPrivateLobby: () => void;
+  onClosePrivateLobby: () => void;
+  onJoinRoom: (code: string) => void;
+};
+
+function PublicLobbyBrowser({
+  websocketUrl,
+  maps,
+  environments,
+  error,
+  activeRoomCode,
+  privateLobbyOpen,
+  onOpenPrivateLobby,
+  onClosePrivateLobby,
+  onJoinRoom,
+}: PublicLobbyBrowserProps) {
+  const [publicLobbies, setPublicLobbies] = useState<PublicLobby[]>([]);
+  const [lobbySearch, setLobbySearch] = useState("");
+  const [refreshingDirectory, setRefreshingDirectory] = useState(false);
+  const [lastDirectoryRefresh, setLastDirectoryRefresh] = useState(0);
+  const directoryRequest = useRef(0);
+  const refreshPublicLobbies = useCallback(async () => {
+    const request = ++directoryRequest.current;
+    setRefreshingDirectory(true);
+    try {
+      const discovered = await discoverPublicLobbies(websocketUrl);
+      if (request === directoryRequest.current) {
+        setPublicLobbies(discovered);
+        setLastDirectoryRefresh(Date.now());
+      }
+    } catch {
+      if (request === directoryRequest.current) setPublicLobbies([]);
+    } finally {
+      if (request === directoryRequest.current) setRefreshingDirectory(false);
+    }
+  }, [websocketUrl]);
+  const filteredPublicLobbies = publicLobbies.filter((lobby) => {
+    const query = lobbySearch.trim().toLowerCase();
+    return !query || lobby.roomCode.toLowerCase().includes(query) || lobby.hostName.toLowerCase().includes(query);
+  });
+  useEffect(() => {
+    void refreshPublicLobbies();
+    const interval = window.setInterval(() => { void refreshPublicLobbies(); }, 10_000);
+    return () => {
+      window.clearInterval(interval);
+      directoryRequest.current++;
+    };
+  }, [refreshPublicLobbies, activeRoomCode]);
+  return (
+    <>
+      <section aria-labelledby="public-lobbies-title" className="overflow-hidden rounded-2xl border border-white/10 bg-[#080a0e]/85 shadow-[0_18px_70px_rgba(0,0,0,.3)]">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 bg-white/[.025] px-4 py-4 sm:px-5">
+                  <div>
+                    <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">Online Multiplayer · Public Directory</div>
+                    <h3 id="public-lobbies-title" className="mt-1 font-display text-lg font-semibold text-white">Available lobbies <span className="ml-1 font-mono-tech text-xs text-zinc-500">{publicLobbies.length}</span></h3>
+                    <p className="mt-1 text-[10px] text-zinc-500">{websocketUrl ? "Browse public relay rooms, or use an invite code for a private room." : "Same-browser preview rooms are listed here; use an invite code for a private room."}</p>
+                  </div>
+                  <button type="button" onClick={() => void refreshPublicLobbies()} disabled={refreshingDirectory} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/12 bg-white/[.04] px-3.5 font-mono-tech text-[9px] font-bold uppercase tracking-[.13em] text-zinc-200 transition-colors hover:border-sky-300/35 hover:bg-sky-300/[.07] hover:text-sky-100 disabled:cursor-wait disabled:opacity-60" aria-label="Refresh public lobby list">
+                    <RefreshCw className={`h-3.5 w-3.5 ${refreshingDirectory ? "animate-spin" : ""}`} /> Refresh
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto" role="region" aria-label="Public multiplayer lobbies" tabIndex={0}>
+                  <table className="w-full min-w-[900px] border-collapse text-left">
+                    <thead className="bg-black/25">
+                      <tr className="border-b border-white/8 font-mono-tech text-[8px] uppercase tracking-[.16em] text-zinc-500">
+                        <th scope="col" className="px-4 py-3 font-semibold sm:px-5">Room Code / Host Name</th>
+                        <th scope="col" className="px-4 py-3 font-semibold">Description / Track Settings</th>
+                        <th scope="col" className="px-4 py-3 text-center font-semibold">Players</th>
+                        <th scope="col" className="px-4 py-3 font-semibold">Map / Circuit</th>
+                        <th scope="col" className="px-4 py-3 font-semibold">Region</th>
+                        <th scope="col" className="px-4 py-3 text-right font-semibold">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[.055]">
+                      {filteredPublicLobbies.map((lobby) => {
+                        const map = maps.find((candidate) => candidate.id === lobby.mapId);
+                        const environment = environments[lobby.environment];
+                        const full = lobby.playerCount >= lobby.maxPlayers;
+                        return (
+                          <tr key={lobby.roomCode} className="group transition-colors hover:bg-sky-300/[.035]">
+                            <td className="px-4 py-3.5 sm:px-5">
+                              <div className="font-mono-tech text-xs font-bold tracking-[.17em] text-white">{lobby.roomCode}</div>
+                              <div className="mt-1 max-w-40 truncate font-display text-[11px] text-zinc-400">{lobby.hostName}</div>
+                            </td>
+                            <td className="max-w-[290px] px-4 py-3.5">
+                              <div className="line-clamp-1 text-[11px] text-zinc-200">{map?.description ?? "Custom circuit session"}</div>
+                              <div className="mt-1 truncate font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{environment?.label ?? "Standard conditions"} · {environment?.subtitle ?? "Track settings"}</div>
+                            </td>
+                            <td className="px-4 py-3.5 text-center">
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-white/8 bg-black/25 px-2.5 py-1.5 font-mono-tech text-[9px] font-bold text-zinc-200"><Users className="h-3 w-3 text-sky-200" />{lobby.playerCount}/{lobby.maxPlayers}</span>
+                            </td>
+                            <td className="px-4 py-3.5"><span className="block max-w-48 truncate font-display text-[11px] font-medium text-zinc-100">{map?.name ?? lobby.mapId}</span></td>
+                            <td className="px-4 py-3.5"><span className="inline-flex max-w-40 items-center gap-1.5 truncate font-mono-tech text-[9px] text-zinc-400"><MapPin className="h-3 w-3 shrink-0 text-zinc-600" />{map?.region ?? "Unlisted"}</span></td>
+                            <td className="px-4 py-3.5 text-right">
+                              <button type="button" onClick={() => onJoinRoom(lobby.roomCode)} disabled={full} aria-label={`Join room ${lobby.roomCode}`} className="min-w-20 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-[.12em] text-sky-100 transition-colors hover:border-sky-300/45 hover:bg-sky-300/[.16] disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/[.025] disabled:text-zinc-600">{full ? "Full" : "Join"}</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {filteredPublicLobbies.length === 0 && (
+                        <tr><td colSpan={6} className="px-5 py-12 text-center">
+                          {refreshingDirectory ? <div className="inline-flex items-center gap-2 font-mono-tech text-[9px] uppercase tracking-wider text-zinc-500"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Scanning active rooms…</div> : <><div className="font-display text-sm font-semibold text-zinc-300">{lobbySearch.trim() ? "No matching lobbies" : "No public lobbies found"}</div><div className="mt-1 text-[10px] text-zinc-600">{lobbySearch.trim() ? "Try another room code or host name." : "Create a public lobby or enter a private room code to get on the grid."}</div></>}
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex flex-col gap-3 border-t border-white/8 bg-black/20 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                  <form className="relative min-w-0 flex-1 sm:max-w-md" role="search" onSubmit={(event) => event.preventDefault()}>
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500" />
+                    <input type="search" value={lobbySearch} onChange={(event) => setLobbySearch(event.target.value)} placeholder="Search lobbies by code or host name…" aria-label="Search lobbies by room code or host name" className="h-10 w-full rounded-lg border border-white/10 bg-black/35 pl-9 pr-3 font-display text-[11px] text-white outline-none placeholder:text-zinc-600 focus:border-sky-300/40" />
+                  </form>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={onOpenPrivateLobby} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/[.035] px-3.5 font-mono-tech text-[8px] font-bold uppercase tracking-[.1em] text-zinc-200 transition-colors hover:border-white/25 hover:bg-white/[.07]"><LockKeyhole className="h-3.5 w-3.5 text-zinc-400" /> Find Private Lobby</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-600 sm:px-5">
+                  <span>Auto-refresh · every 10 seconds · private rooms require an invite code</span>
+                  <span aria-live="polite">{lastDirectoryRefresh ? `Updated ${new Date(lastDirectoryRefresh).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Waiting for directory"}</span>
+                </div>
+                {error && <div role="alert" className="mx-4 mb-4 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-[11px] text-red-200 sm:mx-5">{error}</div>}
+              </section>
+      {privateLobbyOpen && <PrivateLobbyDialog onClose={onClosePrivateLobby} onJoin={(code) => { onClosePrivateLobby(); onJoinRoom(code); }} />}
+    </>
+  );
+}
+
 export function RaceMode({
   mode,
   onModeChange,
@@ -195,11 +364,11 @@ export function RaceMode({
   children,
   footer,
   room,
+  websocketUrl = "",
   cars,
   maps,
   environments,
   initialSettings,
-  createSettingsRequest,
   selectedCarId,
   onCarChange,
   onCreateRoom,
@@ -208,17 +377,20 @@ export function RaceMode({
   onToggleReady,
   onLeaveRoom,
 }: RaceModeProps) {
-  const [joinCode, setJoinCode] = useState("");
-  const [settingsKind, setSettingsKind] = useState<"create" | "edit" | null>(null);
+  const [privateLobbyOpen, setPrivateLobbyOpen] = useState(false);
+  const [settingsKind, setSettingsKind] = useState<"configure" | "create" | "edit" | null>(null);
   const [leaveLobbyConfirmation, setLeaveLobbyConfirmation] = useState(false);
   const [creationError, setCreationError] = useState("");
   const [draftSettings, setDraftSettings] = useState<MatchSelection>(initialSettings);
   const [vehicleThumbnails, setVehicleThumbnails] = useState<Record<string, string>>({});
   const [thumbnailRenderFailed, setThumbnailRenderFailed] = useState(false);
-  const handledCreateRequest = useRef(0);
   const localPlayer = room.players.find((player) => player.id === room.localPlayerId);
   const connectedPlayersReady = room.players.length > 0 && room.players.every((player) => player.ready);
   const closeOrConfirmExit = useCallback(() => {
+    if (privateLobbyOpen) {
+      setPrivateLobbyOpen(false);
+      return;
+    }
     if (settingsKind) {
       setSettingsKind(null);
       return;
@@ -229,7 +401,7 @@ export function RaceMode({
     }
     if (room.roomCode) setLeaveLobbyConfirmation(true);
     else onCloseSetup();
-  }, [settingsKind, leaveLobbyConfirmation, room.roomCode, onCloseSetup]);
+  }, [privateLobbyOpen, settingsKind, leaveLobbyConfirmation, room.roomCode, onCloseSetup]);
   const confirmLeaveRoom = useCallback(() => {
     setLeaveLobbyConfirmation(false);
     onLeaveRoom();
@@ -264,16 +436,13 @@ export function RaceMode({
       mapId: room.settings.mapId,
       environment: room.settings.environment,
     } : initialSettings);
-    setSettingsKind(kind);
+    setSettingsKind(kind === "create" ? "configure" : "edit");
   };
   useEffect(() => {
     // Room state is parent-owned and remains authoritative across mode-tab changes.
-    // Never leave or open the create dialog once a room has become active.
-    if (room.roomCode && settingsKind === "create") setSettingsKind(null);
-    if (createSettingsRequest <= handledCreateRequest.current) return;
-    handledCreateRequest.current = createSettingsRequest;
-    if (mode === "online" && !room.roomCode) openSettings("create");
-  }, [createSettingsRequest, mode, room.roomCode, settingsKind]);
+    // Never leave a stale create dialog open once a room has become active.
+    if (room.roomCode && settingsKind && settingsKind !== "edit") setSettingsKind(null);
+  }, [room.roomCode, settingsKind]);
   useEffect(() => {
     if (mode !== "online" || !room.roomCode) return;
     let cancelled = false;
@@ -287,12 +456,16 @@ export function RaceMode({
     return () => { cancelled = true; };
   }, [mode, room.roomCode]);
   const confirmSettings = () => {
+    if (settingsKind === "configure") {
+      setSettingsKind("create");
+      return;
+    }
     if (settingsKind === "create") {
       if (!onCreateRoom(draftSettings)) {
         setCreationError("Room could not be initialized. Please try again.");
         return;
       }
-    } else {
+    } else if (settingsKind === "edit") {
       onUpdateSettings(draftSettings);
     }
     setSettingsKind(null);
@@ -334,10 +507,20 @@ export function RaceMode({
 
           {mode === "single" ? <p className="mt-3 text-xs leading-relaxed text-zinc-400">Race the local Porsche and Bugatti AI rivals. Your selected garage car will start on the grid.</p> : (
           <div className="mt-4 space-y-4">
-            {!room.roomCode ? <form className="rounded-xl border border-white/8 bg-black/20 p-3" onSubmit={(event) => { event.preventDefault(); onJoinRoom(joinCode); }}>
-              <label htmlFor="join-race-room" className="font-mono-tech text-[9px] font-bold uppercase tracking-[.18em] text-zinc-400">Enter Room Code</label>
-              <div className="mt-2 flex gap-2"><input id="join-race-room" value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} maxLength={6} placeholder="A7K4Q2" aria-label="Six-character room code" className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-2.5 font-mono-tech text-xs uppercase tracking-[0.22em] text-white outline-none focus:border-sky-300/60" /><button type="submit" disabled={joinCode.length !== 6} className="flex items-center gap-1.5 rounded-lg bg-white/10 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-white hover:bg-white/15 disabled:opacity-40"><Link2 className="h-3.5 w-3.5" /> Join</button></div>
-            </form> : <>
+            <div className={room.roomCode ? "mt-4 space-y-4" : "mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,.65fr)]"}>
+              <PublicLobbyBrowser
+                websocketUrl={websocketUrl}
+                maps={maps}
+                environments={environments}
+                error={room.error}
+                activeRoomCode={room.roomCode}
+                privateLobbyOpen={privateLobbyOpen}
+                onOpenPrivateLobby={() => setPrivateLobbyOpen(true)}
+                onClosePrivateLobby={() => setPrivateLobbyOpen(false)}
+                onJoinRoom={onJoinRoom}
+              />
+              {room.roomCode ? (
+                <div className="min-w-0 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-300/20 bg-sky-300/[0.06] p-3">
                 <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-sky-300/10 text-sky-200"><Radio className="h-4 w-4" /></span><div><div className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-sky-200">Room code</div><div className="mt-0.5 font-mono-tech text-xl font-bold tracking-[0.24em] text-white">{room.roomCode}</div></div></div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -378,8 +561,23 @@ export function RaceMode({
               })}</div><p className="mt-2 text-[9px] text-zinc-600">*McLaren Vision GT performance figures are in-game estimates for this race setup.</p></div>
 
               <div className="flex flex-col gap-3 border-t border-white/8 pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-[10px] text-zinc-500">{room.transport === "preview" ? "Preview rooms sync between open tabs on this browser origin. Cross-device play needs VITE_MULTIPLAYER_WS_URL." : "Room state and car telemetry are relayed through the configured WebSocket server."}</div><button type="button" onClick={onToggleReady} disabled={!room.connected} aria-pressed={Boolean(localPlayer?.ready)} className={`flex shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${localPlayer?.ready ? "border-emerald-300/35 bg-emerald-300/10 text-emerald-100" : "border-sky-300/35 bg-sky-300/10 text-sky-100 hover:bg-sky-300/20"}`}><Check className="h-3.5 w-3.5" />{localPlayer?.ready ? "Ready · click to undo" : "I'm ready"}</button></div>
-            </>}
-            {room.error && <div role="alert" className="rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2 text-[11px] text-red-200">{room.error}</div>}
+
+                </div>
+              ) : (
+                <aside aria-labelledby="create-public-lobby-title" className="relative overflow-hidden rounded-2xl border border-sky-300/20 bg-[radial-gradient(ellipse_at_top_right,rgba(56,189,248,.12),transparent_55%),linear-gradient(145deg,#0d121a,#080a0e)] p-5 shadow-[0_18px_70px_rgba(0,0,0,.25)] sm:p-6">
+                  <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">Host a public session</div>
+                  <h3 id="create-public-lobby-title" className="mt-2 font-display text-xl font-bold text-white">Build your grid</h3>
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-400">Choose a circuit and race conditions, then open your lobby to other drivers. Your room code and track settings will appear in the directory automatically.</p>
+                  <div className="mt-5 grid gap-2 rounded-xl border border-white/8 bg-black/25 p-3">
+                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Circuit</span><span className="truncate font-display text-zinc-200">{maps.find((map) => map.id === initialSettings.mapId)?.name ?? "Choose in setup"}</span></div>
+                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Conditions</span><span className="truncate font-display text-zinc-200">{environments[initialSettings.environment]?.label ?? "Choose in setup"}</span></div>
+                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Visibility</span><span className="font-mono-tech text-emerald-200">PUBLIC DIRECTORY</span></div>
+                  </div>
+                  <button type="button" onClick={() => openSettings("create")} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-sky-200/40 bg-sky-300/20 px-4 py-3 font-mono-tech text-[10px] font-black uppercase tracking-[.14em] text-sky-50 shadow-[0_0_28px_rgba(56,189,248,.14)] transition-all hover:border-sky-100/60 hover:bg-sky-300/30 hover:shadow-[0_0_36px_rgba(56,189,248,.2)]"><Plus className="h-4 w-4" /> CREATE CUSTOM LOBBY</button>
+                  <p className="mt-3 text-center text-[9px] text-zinc-600">Private invite-code rooms stay out of the public directory.</p>
+                </aside>
+              )}
+            </div>
           </div>
           )}
           {children}

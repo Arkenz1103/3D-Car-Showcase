@@ -41,6 +41,18 @@ export type OnlineRaceSettings = {
   playerIds: string[];
 };
 
+export type PublicLobby = {
+  roomCode: string;
+  hostId: string;
+  hostName: string;
+  playerCount: number;
+  maxPlayers: number;
+  mapId: string;
+  environment: number;
+  expiresAt: number;
+  source: "preview" | "websocket";
+};
+
 type RoomMessage = {
   type: string;
   roomCode: string;
@@ -167,10 +179,34 @@ function markLocalRoomAlive() {
     const key = roomRegistryKey(snapshot.roomCode);
     const current = JSON.parse(window.localStorage.getItem(key) || "null");
     if (current?.expiresAt > Date.now() && current.hostId !== localPlayerId) return;
-    window.localStorage.setItem(key, JSON.stringify({ hostId: localPlayerId, expiresAt: Date.now() + PEER_STALE_MS }));
+    window.localStorage.setItem(key, JSON.stringify({
+      hostId: localPlayerId,
+      hostName: localPlayer?.username || "Room Host",
+      playerCount: Math.max(1, snapshot.players.length),
+      maxPlayers: 4,
+      mapId: snapshot.settings?.mapId ?? "manila",
+      environment: snapshot.settings?.environment ?? 0,
+      expiresAt: Date.now() + PEER_STALE_MS,
+    }));
   } catch {
     // The in-browser room still works if storage is unavailable.
   }
+}
+
+function publishHostLobby(type: "publishLobby" | "unpublishLobby" = "publishLobby") {
+  if (!snapshot.roomCode || !snapshot.isHost || snapshot.transport !== "websocket" || !socket || socket.readyState !== WebSocket.OPEN) return;
+  const lobby = {
+    roomCode: snapshot.roomCode,
+    hostId: localPlayerId,
+    hostName: localPlayer?.username || "Room Host",
+    playerCount: Math.max(1, snapshot.players.length),
+    maxPlayers: 4,
+    mapId: snapshot.settings?.mapId ?? "manila",
+    environment: snapshot.settings?.environment ?? 0,
+    expiresAt: Date.now() + PEER_STALE_MS,
+    isPublic: true,
+  };
+  socket.send(JSON.stringify({ type, roomCode: snapshot.roomCode, from: localPlayerId, lobby }));
 }
 
 function maybeBroadcastRaceCountdown() {
@@ -197,6 +233,99 @@ function localRoomIsAvailable(roomCode: string) {
   } catch {
     return false;
   }
+}
+
+function getLocalPublicLobbies(): PublicLobby[] {
+  const entries: PublicLobby[] = [];
+  try {
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(LOCAL_ROOM_PREFIX)) continue;
+      try {
+        const roomCode = key.slice(LOCAL_ROOM_PREFIX.length);
+        const record = JSON.parse(window.localStorage.getItem(key) || "null");
+        if (!/^[A-Z0-9]{6}$/.test(roomCode) || !record?.hostId || record.expiresAt <= Date.now()) continue;
+        entries.push({
+          roomCode,
+          hostId: String(record.hostId),
+          hostName: typeof record.hostName === "string" && record.hostName.trim() ? record.hostName : "Room Host",
+          playerCount: Math.max(1, Math.min(4, Number.isInteger(record.playerCount) ? record.playerCount : 1)),
+          maxPlayers: Math.max(1, Math.min(4, Number.isInteger(record.maxPlayers) ? record.maxPlayers : 4)),
+          mapId: typeof record.mapId === "string" ? record.mapId : "manila",
+          environment: Number.isInteger(record.environment) ? Math.max(0, Math.min(2, record.environment)) : 0,
+          expiresAt: Number(record.expiresAt),
+          source: "preview",
+        });
+      } catch {
+        // Skip a malformed stale registry entry without hiding other active rooms.
+      }
+    }
+  } catch {
+    // Lobby browsing still works from a WebSocket room directory if local storage is blocked.
+  }
+  return entries.sort((a, b) => a.roomCode.localeCompare(b.roomCode));
+}
+
+function normalizeRemoteLobby(value: unknown): PublicLobby | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<PublicLobby> & { isPublic?: boolean };
+  const roomCode = typeof record.roomCode === "string" ? record.roomCode.toUpperCase() : "";
+  if (record.isPublic === false || !/^[A-Z0-9]{6}$/.test(roomCode)) return null;
+  const expiresAt = Number.isFinite(record.expiresAt) ? Number(record.expiresAt) : Date.now() + PEER_STALE_MS;
+  if (expiresAt <= Date.now()) return null;
+  return {
+    roomCode,
+    hostId: typeof record.hostId === "string" ? record.hostId : "",
+    hostName: typeof record.hostName === "string" && record.hostName.trim() ? record.hostName.slice(0, 24) : "Room Host",
+    playerCount: Math.max(1, Math.min(4, Number.isInteger(record.playerCount) ? Number(record.playerCount) : 1)),
+    maxPlayers: Math.max(1, Math.min(4, Number.isInteger(record.maxPlayers) ? Number(record.maxPlayers) : 4)),
+    mapId: typeof record.mapId === "string" ? record.mapId : "manila",
+    environment: Number.isInteger(record.environment) ? Math.max(0, Math.min(2, Number(record.environment))) : 0,
+    expiresAt,
+    source: "websocket",
+  };
+}
+
+/**
+ * Reads same-origin preview rooms and, when configured, asks the relay for its
+ * public directory. The relay protocol uses { type: "listRooms" } and replies
+ * with { type: "roomList", rooms: [...] }.
+ */
+export function discoverPublicLobbies(websocketUrl = "", timeoutMs = 1_600): Promise<PublicLobby[]> {
+  const localRooms = getLocalPublicLobbies();
+  if (!websocketUrl || typeof WebSocket === "undefined") return Promise.resolve(localRooms);
+  return new Promise((resolve) => {
+    let socket: WebSocket | null = null;
+    let settled = false;
+    const timer = window.setTimeout(() => finish(localRooms), timeoutMs);
+    const finish = (remoteRooms: PublicLobby[]) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      try { socket?.close(); } catch { /* Ignore stale relay sockets. */ }
+      const byCode = new Map(localRooms.map((entry) => [entry.roomCode, entry]));
+      for (const entry of remoteRooms) byCode.set(entry.roomCode, entry);
+      resolve([...byCode.values()].sort((a, b) => a.roomCode.localeCompare(b.roomCode)));
+    };
+    try {
+      socket = new WebSocket(websocketUrl);
+      socket.onopen = () => { if (!settled) socket?.send(JSON.stringify({ type: "listRooms" })); };
+      socket.onmessage = (event) => {
+        if (settled) return;
+        try {
+          const message = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+          if (message?.type !== "roomList" || !Array.isArray(message.rooms)) return;
+          finish(message.rooms.map(normalizeRemoteLobby).filter((entry: PublicLobby | null): entry is PublicLobby => Boolean(entry)));
+        } catch {
+          // Ignore unrelated or malformed relay packets and retain the local directory.
+        }
+      };
+      socket.onerror = () => finish(localRooms);
+      socket.onclose = () => finish(localRooms);
+    } catch {
+      finish(localRooms);
+    }
+  });
 }
 
 function receive(event: MessageEvent | RoomMessage) {
@@ -305,6 +434,7 @@ function disconnectTransport() {
       // Ignore storage cleanup failures.
     }
   }
+  publishHostLobby("unpublishLobby");
   send("leave");
   channel?.close();
   channel = null;
@@ -389,6 +519,7 @@ function connect(options: {
         notify();
         send("join", { player: localPlayer });
         sendPresence();
+        publishHostLobby();
       };
       socket.onmessage = receive;
       socket.onerror = () => {
@@ -422,6 +553,7 @@ function connect(options: {
   } else if (snapshot.transport === "websocket" && socket) {
     heartbeatTimer = window.setInterval(() => {
       if (localPlayer) send("heartbeat", { player: { ...localPlayer, lastSeen: Date.now() } });
+      publishHostLobby();
     }, HEARTBEAT_MS);
   }
 }

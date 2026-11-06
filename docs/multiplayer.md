@@ -16,4 +16,20 @@ To relay rooms over the internet, set `VITE_MULTIPLAYER_WS_URL` to a hosted `ws:
 {"type":"leave","roomCode":"A7K4Q2","from":"player-id"}
 ```
 
+A client can also request the public lobby directory over a short-lived WebSocket connection:
+
+```json
+{"type":"listRooms"}
+{"type":"roomList","rooms":[{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}]}
+```
+
+The relay should respond with only active, publicly joinable rooms; omit private rooms from `roomList` (the client also ignores entries explicitly marked `isPublic: false`). A WebSocket host publishes its listing after connecting and renews it with its heartbeat; on disconnect it sends `unpublishLobby`. The relay must add/update listings on `publishLobby`, expire stale listings using `expiresAt`, and remove a listing on `unpublishLobby` only when the message's `from`/`hostId` matches that room's host. Example host messages:
+
+```json
+{"type":"publishLobby","roomCode":"A7K4Q2","from":"player-id","lobby":{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}}
+{"type":"unpublishLobby","roomCode":"A7K4Q2","from":"player-id","lobby":{"roomCode":"A7K4Q2","hostId":"player-id","hostName":"Guest Racer","playerCount":2,"maxPlayers":4,"mapId":"manila","environment":0,"expiresAt":1800000000000,"isPublic":true}}
+```
+
+The client re-requests the directory on manual refresh and every ten seconds. Without a relay directory response, it still discovers active same-origin preview rooms from the local room registry. The existing preview transport is not public internet matchmaking.
+
 The relay should only route room messages and enforce room membership/size; it must not trust client readiness or race results as secure competitive data. The current profile is browser-local (`Guest Racer` by default); authentication, server-side identity, authoritative physics, and ranked matchmaking are not included.
