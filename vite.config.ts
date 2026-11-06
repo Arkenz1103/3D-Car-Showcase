@@ -3,6 +3,7 @@ import { fileURLToPath } from "url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { viteSingleFile } from "vite-plugin-singlefile";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,20 +23,7 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: [".e2b.app"],
   },
-  plugins: [react(), tailwindcss()],
-  build: {
-    // Vercel serves static assets separately; keep the document small and let
-    // browsers cache the JS, fonts, and on-demand GLB models independently.
-    assetsInlineLimit: 4096,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          "three-vendor": ["three", "three-mesh-bvh", "@react-three/fiber", "@react-three/drei"],
-          "supabase-vendor": ["@supabase/supabase-js"],
-        },
-      },
-    },
-  },
+  plugins: [react(), tailwindcss(), viteSingleFile()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
