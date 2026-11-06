@@ -1,4 +1,4 @@
-import { Check, Clipboard, CloudSun, Cpu, Crown, Flag, Globe2, Link2, LockKeyhole, LogOut, MapPin, Pencil, Plus, Radio, RefreshCw, Search, Users } from "lucide-react";
+import { Check, Clipboard, Cpu, Crown, Globe2, Link2, LockKeyhole, LogOut, MapPin, Pencil, Plus, Radio, RefreshCw, Search, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { type MultiplayerSnapshot, type OnlineRaceSettings, type PublicLobby, type RoomPlayer } from "@/lib/multiplayer";
@@ -11,7 +11,7 @@ type RaceModeProps = {
   onModeChange: (mode: "single" | "online") => void;
   onCloseSetup: () => void;
   children?: ReactNode;
-  footer?: ReactNode;
+  footer?: (actions: { onCreateLobby: () => void; onlineView: "browser" | "room" }) => ReactNode;
   room: MultiplayerSnapshot;
   cars: { id: string; brand: string; model: string; shortTitle: string; accentHex: string }[];
   maps: { id: string; name: string; region: string; description: string }[];
@@ -72,7 +72,7 @@ function SettingsDialog({
   errorMessage,
   confirming,
 }: {
-  kind: "configure" | "create" | "edit";
+  kind: "create" | "edit";
   value: MatchSelection;
   onChange: (value: MatchSelection) => void;
   maps: RaceModeProps["maps"];
@@ -82,66 +82,40 @@ function SettingsDialog({
   errorMessage: string;
   confirming: boolean;
 }) {
-  const selectedMap = maps.find((map) => map.id === value.mapId);
-  const selectedEnvironment = environments[value.environment];
   return createPortal(
     <div className="fixed inset-0 z-[2147483001] overflow-y-auto bg-[#020408]/88 px-3 py-5 backdrop-blur-md" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="room-settings-title" className="atelier-panel mx-auto my-2 w-full max-w-3xl rounded-3xl border border-white/12 p-5 shadow-[0_30px_120px_rgba(0,0,0,.75)] sm:p-7" onMouseDown={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="font-mono-tech text-[9px] uppercase tracking-[.2em] text-sky-200">{kind === "create" ? "Room setup · confirmation" : kind === "configure" ? "Room setup · customize" : "Room setup · match rules"}</div>
-            <h3 id="room-settings-title" className="mt-1 font-display text-xl font-bold text-white">{kind === "create" ? "Create this room?" : kind === "configure" ? "Customize your lobby" : "Edit match settings"}</h3>
-            {kind !== "create" && <p className="mt-1 text-xs text-zinc-500">Choose the circuit and time/weather conditions for this lobby.</p>}
+            <div className="font-mono-tech text-[9px] uppercase tracking-[.2em] text-sky-200">{kind === "create" ? "New public lobby · configuration" : "Room setup · match rules"}</div>
+            <h3 id="room-settings-title" className="mt-1 font-display text-xl font-bold text-white">{kind === "create" ? "Configure your lobby" : "Edit match settings"}</h3>
+            <p className="mt-1 text-xs text-zinc-500">Choose the circuit and time/weather conditions for this lobby.</p>
           </div>
-          {kind !== "create" && <button type="button" onClick={onClose} aria-label="Close match settings" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-xl text-zinc-400 hover:bg-white/5 hover:text-white">×</button>}
+          <button type="button" onClick={onClose} aria-label="Close match settings" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 text-xl text-zinc-400 hover:bg-white/5 hover:text-white">×</button>
         </div>
 
-        {kind !== "create" ? (
-          <div className="mt-5 space-y-5">
-            <fieldset>
-              <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">01 · Map</legend>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {maps.map((map) => <button type="button" key={map.id} aria-pressed={value.mapId === map.id} onClick={() => onChange({ ...value, mapId: map.id })} className={`rounded-xl border p-3 text-left transition-colors ${value.mapId === map.id ? "border-[#F5C518]/55 bg-[#F5C518]/[.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}>
-                  <span className="block font-display text-sm font-semibold text-white">{map.name}</span><span className="mt-1 block font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{map.region}</span><span className="mt-2 block line-clamp-2 text-[10px] leading-relaxed text-zinc-500">{map.description}</span>
-                </button>)}
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">02 · Time &amp; weather</legend>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {environments.map((environment, index) => <button type="button" key={environment.id} aria-pressed={value.environment === index} onClick={() => onChange({ ...value, environment: index })} className={`rounded-xl border px-3 py-3 text-left transition-colors ${value.environment === index ? "border-sky-300/50 bg-sky-300/[.07]" : "border-white/8 bg-black/20 hover:border-white/20"}`}>
-                  <span className="block font-display text-sm font-semibold text-white">{environment.label}</span><span className="mt-1 block text-[10px] text-zinc-500">{environment.subtitle}</span>
-                </button>)}
-              </div>
-            </fieldset>
-          </div>
-        ) : (
-          <div className="mt-5">
-            <p className="text-sm leading-relaxed text-zinc-400">Review the lobby details. You’ll be the Room Leader and can invite drivers with a room code.</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl border border-sky-300/20 bg-gradient-to-br from-sky-300/[.09] to-black/30 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200/20 bg-sky-200/[.08] px-2.5 py-1 font-mono-tech text-[8px] font-bold uppercase tracking-[.16em] text-sky-100"><Flag className="h-3 w-3" /> Circuit</span>
-                  <span className="font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">01 · Route</span>
-                </div>
-                <div className="mt-3 font-display text-lg font-semibold text-white">{selectedMap?.name ?? "Selected circuit"}</div>
-                <div className="mt-1 font-mono-tech text-[9px] uppercase tracking-[.14em] text-zinc-500">{selectedMap?.region ?? "Race circuit"}</div>
-              </div>
-              <div className="rounded-2xl border border-amber-200/20 bg-gradient-to-br from-amber-200/[.08] to-black/30 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-100/20 bg-amber-100/[.08] px-2.5 py-1 font-mono-tech text-[8px] font-bold uppercase tracking-[.16em] text-amber-100"><CloudSun className="h-3 w-3" /> Weather</span>
-                  <span className="font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">02 · Conditions</span>
-                </div>
-                <div className="mt-3 font-display text-lg font-semibold text-white">{selectedEnvironment?.label ?? "Selected conditions"}</div>
-                <div className="mt-1 text-[10px] leading-relaxed text-zinc-400">{selectedEnvironment?.subtitle ?? "Race conditions"}</div>
-              </div>
+        <div className="mt-5 grid gap-5">
+          <fieldset>
+            <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">01 · Circuit</legend>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {maps.map((map) => <button type="button" key={map.id} aria-pressed={value.mapId === map.id} onClick={() => onChange({ ...value, mapId: map.id })} className={`rounded-xl border p-3 text-left transition-colors ${value.mapId === map.id ? "border-[#F5C518]/55 bg-[#F5C518]/[.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}>
+                <span className="block font-display text-sm font-semibold text-white">{map.name}</span><span className="mt-1 block font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{map.region}</span><span className="mt-2 block line-clamp-2 text-[10px] leading-relaxed text-zinc-500">{map.description}</span>
+              </button>)}
             </div>
-          </div>
-        )}
+          </fieldset>
+          <fieldset>
+            <legend className="mb-2 font-mono-tech text-[9px] uppercase tracking-[.18em] text-zinc-400">02 · Time &amp; weather</legend>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {environments.map((environment, index) => <button type="button" key={environment.id} aria-pressed={value.environment === index} onClick={() => onChange({ ...value, environment: index })} className={`rounded-xl border px-3 py-3 text-left transition-colors ${value.environment === index ? "border-sky-300/50 bg-sky-300/[.07]" : "border-white/8 bg-black/20 hover:border-white/20"}`}>
+                <span className="block font-display text-sm font-semibold text-white">{environment.label}</span><span className="mt-1 block text-[10px] text-zinc-500">{environment.subtitle}</span>
+              </button>)}
+            </div>
+          </fieldset>
+        </div>
         {errorMessage && <div role="alert" className="mt-4 rounded-lg border border-red-400/25 bg-red-400/[.06] px-3 py-2 text-xs text-red-200">{errorMessage}</div>}
         <div className="mt-6 flex flex-col-reverse gap-2.5 border-t border-white/10 pt-5 sm:flex-row sm:justify-end sm:gap-3">
           <button type="button" onClick={onClose} disabled={confirming} className="min-h-11 rounded-xl border border-white/12 bg-white/[.03] px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.16em] text-zinc-300 transition-colors hover:bg-white/[.08] hover:text-white disabled:opacity-50">CANCEL</button>
-          <button type="button" onClick={onConfirm} disabled={confirming} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25 disabled:cursor-wait disabled:opacity-60">{confirming ? "PUBLISHING ROOM…" : kind === "create" ? "CONFIRM & CREATE ROOM" : kind === "configure" ? "REVIEW LOBBY" : "SAVE MATCH SETTINGS"}</button>
+          <button type="button" onClick={onConfirm} disabled={confirming} className="min-h-11 rounded-xl border border-sky-200/35 bg-sky-300/15 px-5 py-3 font-mono-tech text-[10px] font-bold uppercase tracking-[.12em] text-sky-50 transition-colors hover:bg-sky-300/25 disabled:cursor-wait disabled:opacity-60">{confirming ? "PUBLISHING ROOM…" : kind === "create" ? "CONFIRM & CREATE ROOM" : "SAVE MATCH SETTINGS"}</button>
         </div>
       </section>
     </div>,
@@ -285,6 +259,10 @@ function PublicLobbyBrowser({
   }, []);
   const joinRoom = async (code: string) => {
     if (joiningCode) return false;
+    if (activeRoomCode) {
+      setDirectoryError("Your current room is still active. Return to My Active Room and exit it before joining a different lobby.");
+      return false;
+    }
     setJoiningCode(code);
     setDirectoryError("");
     try {
@@ -313,7 +291,7 @@ function PublicLobbyBrowser({
   }, [refreshPublicLobbies, activeRoomCode]);
   return (
     <>
-      <section aria-labelledby="public-lobbies-title" className="overflow-hidden rounded-2xl border border-white/10 bg-[#080a0e]/85 shadow-[0_18px_70px_rgba(0,0,0,.3)]">
+      <section aria-labelledby="public-lobbies-title" className="min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-[#080a0e]/85 shadow-[0_18px_70px_rgba(0,0,0,.3)]">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/8 bg-white/[.025] px-4 py-4 sm:px-5">
                   <div>
                     <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">Online Multiplayer · Public Directory</div>
@@ -358,7 +336,7 @@ function PublicLobbyBrowser({
                             <td className="px-4 py-3.5"><span className="block max-w-48 truncate font-display text-[11px] font-medium text-zinc-100">{map?.name ?? lobby.mapId}</span></td>
                             <td className="px-4 py-3.5"><span className="inline-flex max-w-40 items-center gap-1.5 truncate font-mono-tech text-[9px] text-zinc-400"><MapPin className="h-3 w-3 shrink-0 text-zinc-600" />{map?.region ?? "Unlisted"}</span></td>
                             <td className="px-4 py-3.5 text-right">
-                              <button type="button" onClick={() => void joinRoom(lobby.roomCode)} disabled={full || Boolean(joiningCode)} aria-label={`Join room ${lobby.roomCode}`} className="min-w-20 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-[.12em] text-sky-100 transition-colors hover:border-sky-300/45 hover:bg-sky-300/[.16] disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/[.025] disabled:text-zinc-600">{full ? "Full" : joiningCode === lobby.roomCode ? "Joining…" : "Join"}</button>
+                              <button type="button" onClick={() => void joinRoom(lobby.roomCode)} disabled={full || Boolean(joiningCode) || Boolean(activeRoomCode)} aria-label={activeRoomCode ? "Exit your active room before joining another" : `Join room ${lobby.roomCode}`} className="min-w-20 rounded-lg border border-sky-300/25 bg-sky-300/[.08] px-3 py-2 font-mono-tech text-[8px] font-bold uppercase tracking-[.12em] text-sky-100 transition-colors hover:border-sky-300/45 hover:bg-sky-300/[.16] disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/[.025] disabled:text-zinc-600">{activeRoomCode ? lobby.roomCode === activeRoomCode ? "Your room" : "In room" : full ? "Full" : joiningCode === lobby.roomCode ? "Joining…" : "Join"}</button>
                             </td>
                           </tr>
                         );
@@ -378,7 +356,7 @@ function PublicLobbyBrowser({
                     <input type="search" value={lobbySearch} onChange={(event) => setLobbySearch(event.target.value)} placeholder="Search lobbies by code or host name…" aria-label="Search lobbies by room code or host name" className="h-10 w-full rounded-lg border border-white/10 bg-black/35 pl-9 pr-3 font-display text-[11px] text-white outline-none placeholder:text-zinc-600 focus:border-sky-300/40" />
                   </form>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={onOpenPrivateLobby} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/[.035] px-3.5 font-mono-tech text-[8px] font-bold uppercase tracking-[.1em] text-zinc-200 transition-colors hover:border-white/25 hover:bg-white/[.07]"><LockKeyhole className="h-3.5 w-3.5 text-zinc-400" /> Find Private Lobby</button>
+                    <button type="button" onClick={onOpenPrivateLobby} disabled={Boolean(activeRoomCode)} title={activeRoomCode ? "Exit your active room before joining another lobby" : undefined} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/[.035] px-3.5 font-mono-tech text-[8px] font-bold uppercase tracking-[.1em] text-zinc-200 transition-colors hover:border-white/25 hover:bg-white/[.07] disabled:cursor-not-allowed disabled:opacity-45"><LockKeyhole className="h-3.5 w-3.5 text-zinc-400" /> Find Private Lobby</button>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-600 sm:px-5">
@@ -412,7 +390,8 @@ export function RaceMode({
   onLeaveRoom,
 }: RaceModeProps) {
   const [privateLobbyOpen, setPrivateLobbyOpen] = useState(false);
-  const [settingsKind, setSettingsKind] = useState<"configure" | "create" | "edit" | null>(null);
+  const [onlineView, setOnlineView] = useState<"browser" | "room">("browser");
+  const [settingsKind, setSettingsKind] = useState<"create" | "edit" | null>(null);
   const [leaveLobbyConfirmation, setLeaveLobbyConfirmation] = useState(false);
   const [creationError, setCreationError] = useState("");
   const [creatingRoom, setCreatingRoom] = useState(false);
@@ -421,6 +400,17 @@ export function RaceMode({
   const [thumbnailRenderFailed, setThumbnailRenderFailed] = useState(false);
   const localPlayer = room.players.find((player) => player.id === room.localPlayerId);
   const connectedPlayersReady = room.players.length > 0 && room.players.every((player) => player.ready);
+  const previousRoomCode = useRef(room.roomCode);
+  const previousMode = useRef(mode);
+  useEffect(() => {
+    if (room.roomCode && room.roomCode !== previousRoomCode.current) setOnlineView("room");
+    else if (!room.roomCode && previousRoomCode.current) setOnlineView("browser");
+    previousRoomCode.current = room.roomCode;
+  }, [room.roomCode]);
+  useEffect(() => {
+    if (mode === "online" && previousMode.current !== "online") setOnlineView("browser");
+    previousMode.current = mode;
+  }, [mode]);
   const closeOrConfirmExit = useCallback(() => {
     if (privateLobbyOpen) {
       setPrivateLobbyOpen(false);
@@ -434,11 +424,12 @@ export function RaceMode({
       setLeaveLobbyConfirmation(false);
       return;
     }
-    if (room.roomCode) setLeaveLobbyConfirmation(true);
-    else onCloseSetup();
+    if (room.roomCode) return;
+    onCloseSetup();
   }, [privateLobbyOpen, settingsKind, leaveLobbyConfirmation, room.roomCode, onCloseSetup]);
   const confirmLeaveRoom = useCallback(() => {
     setLeaveLobbyConfirmation(false);
+    setOnlineView("browser");
     onLeaveRoom();
   }, [onLeaveRoom]);
   useEffect(() => {
@@ -471,7 +462,7 @@ export function RaceMode({
       mapId: room.settings.mapId,
       environment: room.settings.environment,
     } : initialSettings);
-    setSettingsKind(kind === "create" ? "configure" : "edit");
+    setSettingsKind(kind);
   };
   useEffect(() => {
     // Room state is parent-owned and remains authoritative across mode-tab changes.
@@ -491,10 +482,6 @@ export function RaceMode({
     return () => { cancelled = true; };
   }, [mode, room.roomCode]);
   const confirmSettings = async () => {
-    if (settingsKind === "configure") {
-      setSettingsKind("create");
-      return;
-    }
     if (settingsKind === "create") {
       setCreatingRoom(true);
       try {
@@ -515,43 +502,51 @@ export function RaceMode({
   };
   const settingMap = maps.find((map) => map.id === room.settings?.mapId);
   const settingWeather = environments[room.settings?.environment ?? -1];
+  const compactLayout = mode === "single" || (mode === "online" && onlineView === "browser");
 
   return (
     <section
       role="dialog"
       aria-modal="true"
       aria-labelledby="race-setup-title"
-      className="fixed inset-0 z-50 h-screen min-h-screen w-screen overflow-y-auto overscroll-y-contain scroll-smooth bg-neutral-950/95 backdrop-blur-md"
+      className={`fixed inset-0 z-50 w-screen overscroll-y-contain bg-neutral-950/95 backdrop-blur-md ${compactLayout ? "h-[100dvh] overflow-y-auto xl:overflow-hidden" : "h-screen min-h-screen overflow-y-auto scroll-smooth"}`}
     >
       <div
-        className="flex min-h-full w-full flex-col px-4 py-5 sm:px-8 sm:py-7 lg:px-12"
+        className={`mx-auto flex w-full max-w-[1680px] flex-col px-4 sm:px-8 lg:px-10 ${compactLayout ? "min-h-full py-3 xl:h-full xl:min-h-0 xl:py-4" : "min-h-full py-5 sm:py-7 lg:px-12"}`}
         onMouseDown={(event) => { if (event.target === event.currentTarget) closeOrConfirmExit(); }}
       >
-        <header className="mb-7 flex w-full items-start justify-between gap-4 border-b border-white/10 pb-5">
+        <header className={`flex w-full shrink-0 items-start justify-between gap-4 border-b border-white/10 ${compactLayout ? "mb-3 pb-3 xl:mb-2 xl:pb-2" : "mb-7 pb-5"}`}>
           <div>
             <div className="flex items-center gap-2 font-mono-tech text-[10px] uppercase tracking-[0.24em] text-[#F5C518]">
               <Radio className="h-3.5 w-3.5" /> Race Control · Grid Setup
             </div>
-            <h2 id="race-setup-title" className="mt-2 font-display text-2xl font-bold uppercase tracking-wide text-white sm:text-3xl">Choose your race</h2>
+            <h2 id="race-setup-title" className={`mt-1 font-display font-bold uppercase tracking-wide text-white ${compactLayout ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl"}`}>Choose your race</h2>
             <p className="mt-1 text-sm text-zinc-400">Pick a circuit and conditions before the garage gate opens.</p>
           </div>
           <button type="button" onClick={onCloseSetup} aria-label="Close race setup" className="atelier-pill grid h-10 w-10 shrink-0 place-items-center rounded-full text-zinc-300 hover:text-white">
             <span className="text-xl leading-none">×</span>
           </button>
         </header>
-        <div className="w-full flex-1 space-y-7">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div><div className="font-mono-tech text-[10px] uppercase tracking-[0.2em] text-zinc-500">00 · Race mode</div><h3 id="race-mode-heading" className="mt-1 font-display text-lg font-semibold text-white">Choose how to race</h3></div>
-            <div role="group" aria-label="Race mode" className="flex rounded-xl border border-white/10 bg-black/30 p-1">
+        <div className={`w-full ${compactLayout ? "flex min-h-0 flex-1 flex-col gap-3" : "flex-1 space-y-7"}`}>
+          <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
+            <div><div className="font-mono-tech text-[9px] uppercase tracking-[0.2em] text-zinc-500">00 · Race mode</div><h3 id="race-mode-heading" className="mt-0.5 font-display text-base font-semibold text-white sm:text-lg">Choose how to race</h3></div>
+            <div role="group" aria-label="Race mode" className="flex rounded-xl border border-white/10 bg-black/30 p-0.5">
               <button type="button" aria-pressed={mode === "single"} onClick={() => onModeChange("single")} className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-mono-tech text-[9px] uppercase tracking-wider transition-colors ${mode === "single" ? "bg-[#DC1A22]/25 text-white" : "text-zinc-400 hover:text-white"}`}><Cpu className="h-3.5 w-3.5" /><span>Single Player vs AI</span></button>
               <button type="button" aria-pressed={mode === "online"} onClick={() => onModeChange("online")} className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-mono-tech text-[9px] uppercase tracking-wider transition-colors ${mode === "online" ? "bg-sky-300/15 text-sky-100" : "text-zinc-400 hover:text-white"}`}><Globe2 className="h-3.5 w-3.5" /><span>Online Multiplayer</span></button>
             </div>
           </div>
 
-          {mode === "single" ? <p className="mt-3 text-xs leading-relaxed text-zinc-400">Race the local Porsche and Bugatti AI rivals. Your selected garage car will start on the grid.</p> : (
-          <div className="mt-4 space-y-4">
-            <div className={room.roomCode ? "mt-4 space-y-4" : "mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,.65fr)]"}>
-              <PublicLobbyBrowser
+          {mode === "online" && (
+            <nav aria-label="Online multiplayer views" className="flex shrink-0 items-center gap-1 rounded-xl border border-white/10 bg-black/30 p-1">
+              <button type="button" aria-current={onlineView === "browser" ? "page" : undefined} onClick={() => setOnlineView("browser")} className={`rounded-lg px-3 py-2 font-mono-tech text-[9px] font-bold uppercase tracking-[.12em] transition-colors ${onlineView === "browser" ? "bg-sky-300/15 text-sky-100" : "text-zinc-400 hover:bg-white/[.05] hover:text-white"}`}>Browse Lobbies</button>
+              <button type="button" disabled={!room.roomCode} aria-current={onlineView === "room" ? "page" : undefined} onClick={() => setOnlineView("room")} className={`rounded-lg px-3 py-2 font-mono-tech text-[9px] font-bold uppercase tracking-[.12em] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${onlineView === "room" ? "bg-emerald-300/10 text-emerald-100" : "text-zinc-400 hover:bg-white/[.05] hover:text-white"}`}>My Active Room{room.roomCode ? ` · ${room.roomCode}` : ""}</button>
+            </nav>
+          )}
+
+          {mode === "single" ? <p className="text-[11px] leading-snug text-zinc-500 xl:hidden">Race the local Porsche and Bugatti AI rivals. Your selected garage car will start on the grid.</p> : (
+          <div className={onlineView === "browser" && compactLayout ? "grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,.75fr)] xl:grid-rows-[minmax(0,1fr)_auto]" : "mt-4 space-y-4"}>
+            <div className={onlineView === "room" ? "min-w-0" : compactLayout ? "contents" : "mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,.65fr)]"}>
+              {onlineView === "browser" && <PublicLobbyBrowser
                 maps={maps}
                 environments={environments}
                 error={room.error}
@@ -560,14 +555,18 @@ export function RaceMode({
                 onOpenPrivateLobby={() => setPrivateLobbyOpen(true)}
                 onClosePrivateLobby={() => setPrivateLobbyOpen(false)}
                 onJoinRoom={onJoinRoom}
-              />
-              {room.roomCode ? (
+              />}
+              {onlineView === "room" && room.roomCode ? (
                 <div className="min-w-0 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button type="button" onClick={() => setOnlineView("browser")} className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[.035] px-3.5 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-[.12em] text-zinc-200 transition-colors hover:border-sky-300/35 hover:bg-sky-300/[.07] hover:text-sky-100">← Browse Lobbies</button>
+                <span className="font-mono-tech text-[9px] uppercase tracking-[.18em] text-sky-200">Active room · {room.roomCode}</span>
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-300/20 bg-sky-300/[0.06] p-3">
                 <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-xl bg-sky-300/10 text-sky-200"><Radio className="h-4 w-4" /></span><div><div className="font-mono-tech text-[9px] uppercase tracking-[0.18em] text-sky-200">Room code</div><div className="mt-0.5 font-mono-tech text-xl font-bold tracking-[0.24em] text-white">{room.roomCode}</div></div></div>
                 <div className="flex shrink-0 items-center gap-2">
                   <button type="button" onClick={copyRoomCode} className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 font-mono-tech text-[9px] uppercase tracking-wider text-zinc-200 transition-colors hover:bg-white/8"><Clipboard className="h-3.5 w-3.5" /> Copy code</button>
-                  <button type="button" onClick={() => setLeaveLobbyConfirmation(true)} className="flex items-center gap-1.5 rounded-lg border border-red-300/25 bg-red-400/[.06] px-3 py-2 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-red-200 transition-colors hover:border-red-300/45 hover:bg-red-400/[.14] hover:text-white"><LogOut className="h-3.5 w-3.5" /> EXIT LOBBY</button>
+                  <button type="button" onClick={() => setLeaveLobbyConfirmation(true)} className="flex items-center gap-1.5 rounded-lg border border-red-300/25 bg-red-400/[.06] px-3 py-2 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-red-200 transition-colors hover:border-red-300/45 hover:bg-red-400/[.14] hover:text-white"><LogOut className="h-3.5 w-3.5" /> Exit Lobby</button>
                 </div>
               </div>
 
@@ -605,26 +604,34 @@ export function RaceMode({
               <div className="flex flex-col gap-3 border-t border-white/8 pt-3 sm:flex-row sm:items-center sm:justify-between"><div className="text-[10px] text-zinc-500">{room.transport === "preview" ? "Preview rooms sync only between tabs on this browser. Configure Supabase or VITE_MULTIPLAYER_WS_URL for cross-device races." : room.transport === "supabase" ? "Player state, readiness, race start and car telemetry sync through Supabase Realtime across devices." : "Room state and car telemetry are relayed through the configured WebSocket server."}</div><button type="button" onClick={onToggleReady} disabled={!room.connected} aria-pressed={Boolean(localPlayer?.ready)} className={`flex shrink-0 items-center justify-center gap-2 rounded-xl border px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${localPlayer?.ready ? "border-emerald-300/35 bg-emerald-300/10 text-emerald-100" : "border-sky-300/35 bg-sky-300/10 text-sky-100 hover:bg-sky-300/20"}`}><Check className="h-3.5 w-3.5" />{localPlayer?.ready ? "Ready · click to undo" : "I'm ready"}</button></div>
 
                 </div>
-              ) : (
-                <aside aria-labelledby="create-public-lobby-title" className="relative overflow-hidden rounded-2xl border border-sky-300/20 bg-[radial-gradient(ellipse_at_top_right,rgba(56,189,248,.12),transparent_55%),linear-gradient(145deg,#0d121a,#080a0e)] p-5 shadow-[0_18px_70px_rgba(0,0,0,.25)] sm:p-6">
-                  <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">Host a public session</div>
-                  <h3 id="create-public-lobby-title" className="mt-2 font-display text-xl font-bold text-white">Build your grid</h3>
-                  <p className="mt-2 text-xs leading-relaxed text-zinc-400">Choose a circuit and race conditions, then open your lobby to other drivers. Your room code and track settings will appear in the directory automatically.</p>
-                  <div className="mt-5 grid gap-2 rounded-xl border border-white/8 bg-black/25 p-3">
-                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Circuit</span><span className="truncate font-display text-zinc-200">{maps.find((map) => map.id === initialSettings.mapId)?.name ?? "Choose in setup"}</span></div>
-                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Conditions</span><span className="truncate font-display text-zinc-200">{environments[initialSettings.environment]?.label ?? "Choose in setup"}</span></div>
+              ) : onlineView === "browser" ? (
+                <aside aria-labelledby="create-public-lobby-title" className="relative overflow-hidden rounded-2xl border border-sky-300/20 bg-[radial-gradient(ellipse_at_top_right,rgba(56,189,248,.12),transparent_55%),linear-gradient(145deg,#0d121a,#080a0e)] p-4 shadow-[0_18px_70px_rgba(0,0,0,.25)] sm:p-5">
+                  <div className="font-mono-tech text-[9px] font-bold uppercase tracking-[.2em] text-sky-200">{room.roomCode ? "Hosted session" : "Host a public session"}</div>
+                  <h3 id="create-public-lobby-title" className="mt-1 font-display text-lg font-bold text-white">{room.roomCode ? "Your room is live" : "Build your grid"}</h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">{room.roomCode ? "Your room stays open while you browse. Switch back at any time to see drivers and readiness." : "Choose a circuit and conditions, then publish a room for drivers across devices."}</p>
+                  <div className="mt-3 grid gap-2 rounded-xl border border-white/8 bg-black/25 p-3">
+                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Circuit</span><span className="truncate font-display text-zinc-200">{maps.find((map) => map.id === initialSettings.mapId)?.name ?? "Choose below"}</span></div>
+                    <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Conditions</span><span className="truncate font-display text-zinc-200">{environments[initialSettings.environment]?.label ?? "Choose below"}</span></div>
                     <div className="flex items-center justify-between gap-3 text-[10px]"><span className="font-mono-tech uppercase tracking-wider text-zinc-500">Visibility</span><span className="font-mono-tech text-emerald-200">PUBLIC DIRECTORY</span></div>
                   </div>
-                  <button type="button" onClick={() => openSettings("create")} className="mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-sky-200/40 bg-sky-300/20 px-4 py-3 font-mono-tech text-[10px] font-black uppercase tracking-[.14em] text-sky-50 shadow-[0_0_28px_rgba(56,189,248,.14)] transition-all hover:border-sky-100/60 hover:bg-sky-300/30 hover:shadow-[0_0_36px_rgba(56,189,248,.2)]"><Plus className="h-4 w-4" /> CREATE CUSTOM LOBBY</button>
-                  <p className="mt-3 text-center text-[9px] text-zinc-600">Private invite-code rooms stay out of the public directory.</p>
+                  {room.roomCode ? (
+                    <button type="button" onClick={() => setOnlineView("room")} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-200/30 bg-emerald-300/10 px-4 py-2.5 font-mono-tech text-[9px] font-bold uppercase tracking-[.13em] text-emerald-100 transition-colors hover:bg-emerald-300/15">My Active Room · {room.roomCode}</button>
+                  ) : (
+                    <button type="button" onClick={() => openSettings("create")} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-sky-200/40 bg-sky-300/20 px-4 py-3 font-mono-tech text-[10px] font-black uppercase tracking-[.14em] text-sky-50 shadow-[0_0_28px_rgba(56,189,248,.14)] transition-all hover:border-sky-100/60 hover:bg-sky-300/30 hover:shadow-[0_0_36px_rgba(56,189,248,.2)]"><Plus className="h-4 w-4" /> CREATE CUSTOM LOBBY</button>
+                  )}
+                  <p className="mt-3 text-[9px] text-zinc-500">Private invite-code rooms stay out of the public directory.</p>
                 </aside>
-              )}
+              ) : null}
             </div>
           </div>
           )}
-          {children}
+          {children && mode === "single" && (
+            <div className="grid grid-cols-1 gap-4 xl:min-h-0 xl:flex-1 xl:grid-cols-2 xl:grid-rows-[minmax(0,1fr)_auto] xl:[&>section:first-child]:col-span-2">
+              {children}
+            </div>
+          )}
         </div>
-        {footer && <div className="mt-7 w-full">{footer}</div>}
+        {footer && <div className={`w-full ${compactLayout ? "mt-auto pt-2 xl:pt-3" : "mt-7"}`}>{footer({ onCreateLobby: () => openSettings("create"), onlineView })}</div>}
       </div>
       {settingsKind && <SettingsDialog kind={settingsKind} value={draftSettings} onChange={setDraftSettings} maps={maps} environments={environments} onConfirm={confirmSettings} onClose={() => setSettingsKind(null)} errorMessage={settingsKind === "create" ? creationError : ""} confirming={creatingRoom} />}
       {leaveLobbyConfirmation && room.roomCode && <LeaveLobbyDialog roomCode={room.roomCode} onStay={() => setLeaveLobbyConfirmation(false)} onLeave={confirmLeaveRoom} />}
