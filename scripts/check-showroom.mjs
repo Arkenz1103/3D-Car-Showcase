@@ -132,7 +132,7 @@ assert.match(loadingScreenSource, /LOADING_DURATION_MS = 4000[\s\S]*Math\.min\(1
 assert.match(loadingScreenSource, /LOADING[\s\S]*\{progress\}%/, "The loading screen must show the live percentage alongside its bar");
 assert.match(loadingScreenSource, /h-2 w-full[\s\S]*role="progressbar"[\s\S]*aria-valuenow=\{progress\}[\s\S]*width: `\$\{progress\}%`/, "The loading percentage must update a visible 1-to-100 progress bar");
 assert.match(loadingScreenSource, /if \(!assetReady \|\| progress < 100\) return/, "The loading screen must remain until both assets and 100 percent are ready");
-assert.match(appSource, /<MainMenu[\s\S]*onStart=\{startGame\}[\s\S]*onQuit=\{quitGame\}/, "The menu must connect its Start Game and Quit Game actions to the app");
+assert.match(appSource, /<MainMenu[\s\S]*onStart=\{continueAsGuest\}[\s\S]*onQuit=\{quitGame\}/, "The menu must connect guest continuation and Quit Game actions to the app");
 const homeMenuSource = mainMenuSource.slice(mainMenuSource.indexOf('{screen === "home"'), mainMenuSource.indexOf('{screen === "settings"'));
 assert.match(homeMenuSource, /onClick=\{beginGame\}[\s\S]*Start Game[\s\S]*Settings[\s\S]*Quit Game/, "The main menu must offer only Start Game, Settings and Quit Game");
 assert.doesNotMatch(homeMenuSource, /Current session|Selected vehicle|Quick controls|LOADING|Initializing/, "The main menu must not include loading or garage HUD content");

@@ -51,6 +51,8 @@ function createClient() {
     },
     window: {
       localStorage: {
+        get length() { return storage.size; },
+        key: (index) => [...storage.keys()][index] ?? null,
         getItem: (key) => storage.get(key) ?? null,
         setItem: (key, value) => storage.set(key, String(value)),
         removeItem: (key) => storage.delete(key),
@@ -79,6 +81,14 @@ assert.equal(code.length, 6, "Room codes should be six characters");
 assert.equal(host.getMultiplayerSnapshot().roomCode, code, "Creating a room should initialize its active room code");
 assert.equal(host.getMultiplayerSnapshot().isHost, true, "The creator should be initialized as room host");
 assert.equal(host.getMultiplayerSnapshot().players[0].isHost, true, "The creator roster entry should have host privileges");
+const advertisedLobbies = await host.discoverPublicLobbies();
+assert.equal(advertisedLobbies.length, 1, "Active local rooms should appear in the public directory");
+assert.equal(advertisedLobbies[0].roomCode, code, "Lobby directory should publish the active room code");
+assert.equal(advertisedLobbies[0].hostName, "Host Racer", "Lobby directory should publish the room host name");
+assert.match(source, /function publishHostLobby\([\s\S]*?type: "publishLobby" \| "unpublishLobby"[\s\S]*?isPublic: true[\s\S]*?socket\.send\(JSON\.stringify\(\{ type, roomCode: snapshot\.roomCode, from: localPlayerId, lobby \}\)\)/, "WebSocket hosts should publish complete public-lobby metadata to the relay");
+assert.match(source, /socket\.onopen = \(\) => \{[\s\S]*?publishHostLobby\(\);/, "A WebSocket host should publish its listing after connecting");
+assert.match(source, /heartbeatTimer = window\.setInterval\(\(\) => \{[\s\S]*?publishHostLobby\(\);[\s\S]*?\}, HEARTBEAT_MS\)/, "The host should renew its listing with the heartbeat");
+assert.match(source, /publishHostLobby\("unpublishLobby"\);[\s\S]*?socket\.close\(\)/, "The host should withdraw the listing before closing the WebSocket");
 const hostId = host.getMultiplayerSnapshot().localPlayerId;
 const guestId = guest.getMultiplayerSnapshot().localPlayerId;
 assert.notEqual(hostId, guestId, "Each tab must generate a unique in-memory player ID");
@@ -144,6 +154,7 @@ assert.ok(Math.abs(hostRaceCountdown.raceStartAt - guestRaceCountdown.raceStartA
 
 host.disconnectRaceRoom();
 await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal((await host.discoverPublicLobbies()).length, 0, "A closed host room should disappear from the public directory");
 assert.equal(guest.getMultiplayerSnapshot().players.length, 1, "Leaving should remove the peer from the lobby");
 guest.disconnectRaceRoom();
 
@@ -152,7 +163,7 @@ vm.runInNewContext(profileJavascript, {
   module: profileModule,
   exports: profileModule.exports,
   window: {
-    localStorage: {
+    sessionStorage: {
       getItem: (key) => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, String(value)),
       removeItem: (key) => storage.delete(key),
@@ -165,8 +176,10 @@ vm.runInNewContext(profileJavascript, {
 const profiles = profileModule.exports;
 assert.equal(profiles.loadPlayerProfile().displayName, "Guest Racer", "Unauthenticated profile should default to Guest Racer");
 assert.equal(profiles.savePlayerProfile({ displayName: "  Ada   Racer  " }).displayName, "Ada Racer", "Editable profile names should be normalized and persisted");
+assert.equal(profiles.loadPlayerProfile().displayName, "Ada Racer", "Guest profile changes should persist in sessionStorage");
+assert.match(profiles.createGuestProfile().displayName, /^Guest Racer #[0-9]{4}$/, "New guest sessions should receive a four-digit racer ID");
 assert.equal(profiles.getAvatarInitials("Ada Racer"), "AR", "Profile avatars should use display-name initials");
-assert.match(appSource, /<UserProfileBadge profile=\{playerProfile\}/, "The editable profile badge should be mounted in the garage navigation");
+assert.match(appSource, /<UserProfileBadge[\s\S]*profile=\{playerProfile\}[\s\S]*onAuthenticated=\{finishLinkingAccount\}/, "The editable profile badge should support guest account linking in the garage navigation");
 assert.match(appSource, /<RaceMode[\s\S]*onCreateRoom=\{createOnlineRoom\}[\s\S]*onJoinRoom=\{joinOnlineRoom\}/, "Race setup should expose online create/join actions");
 assert.match(raceModeSource, /CONFIRM & CREATE ROOM[\s\S]*Match Settings[\s\S]*Edit Match Settings/, "Room creation and host-only lobby settings should use the requested steps");
 assert.match(raceModeSource, /Circuit[\s\S]*selectedMap\?\.name[\s\S]*Weather[\s\S]*selectedEnvironment\?\.label/, "Room creation confirmation should summarize circuit and weather in badge-based cards");
@@ -182,7 +195,11 @@ assert.match(raceModeSource, /return createPortal\([\s\S]*document\.body/, "The 
 assert.match(raceModeSource, /fixed inset-0 z-50 h-screen min-h-screen w-screen overflow-y-auto overscroll-y-contain scroll-smooth bg-neutral-950\/95 backdrop-blur-md/, "Race Mode should own a full-screen overlay with one primary scrolling surface");
 assert.doesNotMatch(appSource, /max-w-5xl max-h-\[94vh\] overflow-y-auto rounded-3xl border/, "The App should not wrap Race Mode in its former constrained floating dialog");
 assert.match(appSource, /raceModeType !== "online" && <section aria-labelledby="race-difficulty-heading"/, "Difficulty controls should remain available only for single-player setup");
-assert.equal((appSource.match(/<Plus className="h-3\.5 w-3\.5" \/> Create Room/g) ?? []).length, 1, "The main multiplayer flow should expose exactly one Create Room action");
+assert.match(raceModeSource, /CREATE CUSTOM LOBBY/, "The online tab should provide a prominent custom room action");
+assert.match(raceModeSource, /Refresh[\s\S]*Room Code \/ Host Name[\s\S]*Description \/ Track Settings[\s\S]*Players[\s\S]*Map \/ Circuit[\s\S]*Region[\s\S]*Action/, "The public lobby directory should use the requested refreshable table columns");
+assert.match(raceModeSource, /Search lobbies by room code or host name[\s\S]*Find Private Lobby/, "The directory should support live search and invite-code joining");
+assert.match(raceModeSource, /setInterval\(\(\) => \{ void refreshPublicLobbies\(\); \}, 10_000\)/, "The lobby directory should auto-refresh on a ten-second poll");
+assert.match(appSource, /websocketUrl=\{MULTIPLAYER_WS_URL\}/, "The public lobby browser should receive the configured relay URL");
 assert.match(raceModeSource, /VehicleThumbnail[\s\S]*Top speed[\s\S]*0–100[\s\S]*Handling[\s\S]*Select Car/, "Car selection should use visual cards and performance badges");
 assert.match(raceModeSource, /renderVehicleThumbnails[\s\S]*imageUrl=\{vehicleThumbnails\[car\.id\]\}/, "Online lobby cards should display the generated model snapshots");
 assert.doesNotMatch(raceModeSource, /function VehicleThumbnail[\s\S]*?<svg/, "Lobby car cards should no longer use hand-drawn side-profile vectors");
@@ -192,14 +209,16 @@ assert.match(vehicleThumbnailSource, /RoomEnvironment[\s\S]*fromScene\(room/, "L
 assert.match(vehicleThumbnailSource, /renderer\.toneMapping = ACESFilmicToneMapping/, "Lobby thumbnail lighting should use filmic showroom tonemapping");
 assert.match(raceModeSource, /READY[\s\S]*NOT READY/, "Every lobby player should have an explicit ready status");
 assert.match(appSource, /raceModeType === "online" && !multiplayerSnapshot\.isHost \?/, "Non-host online players should only see the room-leader waiting state");
-assert.match(appSource, /raceModeType === "online" && !multiplayerSnapshot\.roomCode \?/, "The initial online setup should put Create Room in the bottom action row");
+assert.match(appSource, /raceModeType === "online" && !multiplayerSnapshot\.roomCode \? null/, "The legacy footer create action should not duplicate the browser's control bar");
 assert.match(appSource, /!\(raceModeType === "online" && multiplayerSnapshot\.roomCode\) && <>/, "Inline setup selectors should be hidden only on the Online Multiplayer tab when a room is active");
 assert.match(appSource, /const \[multiplayerSnapshot, setMultiplayerSnapshot\] = React\.useState\(getMultiplayerSnapshot\(\)\)/, "The parent App should own the active room snapshot across tab changes");
 assert.match(appSource, /const chooseRaceMode = React\.useCallback\(\(mode\) => \{[\s\S]*?setRaceModeType\(mode\);\n  \}, \[\]\)/, "Switching race-mode tabs should preserve an established room for when the player returns online");
-assert.match(raceModeSource, /if \(room\.roomCode && settingsKind === "create"\) setSettingsKind\(null\)/, "An active room must dismiss any stale room-creation dialog");
-assert.match(raceModeSource, /!room\.roomCode \? <form[\s\S]*room\.roomCode\}/, "The online tab should render the active room lobby when a room code exists");
-assert.match(raceModeSource, /handledCreateRequest = useRef\(0\)/, "Create-room requests should be consumed once instead of reopening on tab changes");
-assert.match(appSource, /setCreateSettingsRequest\(\(request\) => request \+ 1\)/, "The bottom Create Room action should open the match setup modal");
+assert.match(raceModeSource, /if \(room\.roomCode && settingsKind && settingsKind !== "edit"\) setSettingsKind\(null\)/, "An active room must dismiss any stale room-creation dialog");
+assert.match(raceModeSource, /kind === "configure" \? "Room setup · customize"[\s\S]*Customize your lobby[\s\S]*REVIEW LOBBY/, "Custom lobby setup should configure track/weather before its review confirmation step");
+assert.match(raceModeSource, /CONFIRM & CREATE ROOM/, "The lobby review step should require explicit room creation confirmation");
+assert.match(raceModeSource, /<PublicLobbyBrowser[\s\S]*?\{room\.roomCode \? \([\s\S]*?\) : \(/, "The public directory should remain mounted above the room lobby after a player joins or creates a room");
+assert.match(raceModeSource, /room\.roomCode \? "mt-4 space-y-4" : "mt-4 grid items-start gap-4 xl:grid-cols-\[[\s\S]*<PublicLobbyBrowser[\s\S]*CREATE CUSTOM LOBBY/, "The directory and create-lobby action should be presented side by side before room creation");
+assert.match(raceModeSource, /onClick=\{\(\) => openSettings\("create"\)\}/, "Create Custom Lobby should open the existing track and weather setup modal");
 assert.match(appSource, /const roomCode = createRaceRoom[\s\S]*const createdRoom = getMultiplayerSnapshot\(\)[\s\S]*setMultiplayerSnapshot\(createdRoom\)[\s\S]*createdRoom\.isHost/, "Confirming creation should generate a code, initialize the host snapshot, and transition into the lobby");
 assert.match(countdownSource, /THE RACE IS STARTING IN 3\.\.\. 2\.\.\. 1\.\.\./, "The online countdown should display the explicit race-start message");
 assert.match(countdownSource, /activeNumber = elapsed < 1000 \? 3 : elapsed < 2000 \? 2 : 1/, "Each player should animate the same 3-2-1 message sequence");

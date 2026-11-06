@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "check:showroom": "node scripts/check-showroom.mjs",
-    "check:multiplayer": "node scripts/check-multiplayer.mjs"
+    "check:multiplayer": "node scripts/check-multiplayer.mjs",
+    "check:auth": "node scripts/check-authentication.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
@@ -17,6 +18,7 @@
     "@fontsource/space-grotesk": "^5.3.0",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",
+    "@supabase/supabase-js": "^2.119.0",
     "clsx": "2.1.1",
     "lucide-react": "^1.61.0",
     "react": "19.2.6",

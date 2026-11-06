@@ -4,8 +4,8 @@ export type PlayerProfile = {
   rank: string;
 };
 
-const PROFILE_STORAGE_KEY = "city-speedrunners-player-profile";
-const DEFAULT_PROFILE: PlayerProfile = {
+const PROFILE_STORAGE_KEY = "city-speedrunners-guest-profile";
+export const DEFAULT_PROFILE: PlayerProfile = {
   displayName: "Guest Racer",
   level: 1,
   rank: "ROOKIE",
@@ -13,13 +13,24 @@ const DEFAULT_PROFILE: PlayerProfile = {
 
 export function normalizeDisplayName(value: unknown) {
   if (typeof value !== "string") return DEFAULT_PROFILE.displayName;
-  const trimmed = value.replace(/[<>\u0000-\u001f]/g, "").trim().replace(/\s+/g, " ").slice(0, 20);
+  const trimmed = value.replace(/[<>\u0000-\u001f]/g, "").trim().replace(/\s+/g, " ").slice(0, 24);
   return trimmed || DEFAULT_PROFILE.displayName;
+}
+
+export function createGuestProfile(): PlayerProfile {
+  const bytes = new Uint8Array(2);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else {
+    bytes[0] = Math.random() * 256;
+    bytes[1] = Math.random() * 256;
+  }
+  const suffix = String(((bytes[0] << 8) | bytes[1]) % 10_000).padStart(4, "0");
+  return savePlayerProfile({ ...DEFAULT_PROFILE, displayName: `Guest Racer #${suffix}` });
 }
 
 export function loadPlayerProfile(): PlayerProfile {
   try {
-    const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    const raw = window.sessionStorage.getItem(PROFILE_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_PROFILE };
     const stored = JSON.parse(raw);
     return {
@@ -39,11 +50,19 @@ export function savePlayerProfile(profile: Partial<PlayerProfile>): PlayerProfil
     rank: typeof profile.rank === "string" ? profile.rank.slice(0, 16).toUpperCase() : DEFAULT_PROFILE.rank,
   };
   try {
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(safe));
+    window.sessionStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(safe));
   } catch {
-    // The guest profile still works in-memory when browser storage is blocked.
+    // Guest identity continues to work in-memory when browser storage is blocked.
   }
   return safe;
+}
+
+export function clearGuestProfile() {
+  try {
+    window.sessionStorage.removeItem(PROFILE_STORAGE_KEY);
+  } catch {
+    // Storage may be disabled; the in-memory account state is still authoritative.
+  }
 }
 
 export function getAvatarInitials(displayName: string) {

@@ -1,14 +1,21 @@
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Link2, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getAvatarInitials, normalizeDisplayName, type PlayerProfile } from "@/lib/playerProfile";
+import { AuthGateway } from "@/components/AuthGateway";
+import type { AccountProfile } from "@/lib/authService";
+import type { GarageSaveData } from "@/lib/garageSave";
 
 type UserProfileBadgeProps = {
   profile: PlayerProfile;
+  isGuest: boolean;
+  guestSaveData: GarageSaveData;
   onSave: (profile: PlayerProfile) => void;
+  onAuthenticated: (account: AccountProfile) => void | Promise<void>;
 };
 
-export function UserProfileBadge({ profile, onSave }: UserProfileBadgeProps) {
+export function UserProfileBadge({ profile, isGuest, guestSaveData, onSave, onAuthenticated }: UserProfileBadgeProps) {
   const [open, setOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
   const [draft, setDraft] = useState(profile.displayName);
 
   useEffect(() => setDraft(profile.displayName), [profile.displayName]);
@@ -65,14 +72,32 @@ export function UserProfileBadge({ profile, onSave }: UserProfileBadgeProps) {
             className="mt-1.5 w-full rounded-lg border border-white/12 bg-black/35 px-3 py-2 font-display text-sm text-white outline-none focus:border-[#F5C518]/60"
             placeholder="Guest Racer"
           />
-          <div className="mt-2 text-[10px] leading-relaxed text-zinc-500">Guest profile stored in this browser. Sign-in is not connected yet.</div>
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <span className="font-mono-tech text-[8px] uppercase tracking-wider text-zinc-600">Local profile</span>
+          <div className="mt-2 text-[10px] leading-relaxed text-zinc-500">{isGuest ? "Guest session · saved in this tab until you link an account." : "Signed in · garage progress syncs to your cloud account."}</div>
+          {isGuest && (
+            <button type="button" onClick={() => setLinkOpen(true)} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#F5C518]/35 bg-gradient-to-r from-[#F5C518]/15 to-[#DC1A22]/15 px-3 py-2.5 font-mono-tech text-[9px] font-black uppercase tracking-[.11em] text-amber-100 shadow-[0_0_20px_rgba(245,197,24,.08)] transition-colors hover:border-[#F5C518]/60 hover:from-[#F5C518]/20 hover:to-[#DC1A22]/25">
+              <Link2 className="h-3.5 w-3.5" /> LINK ACCOUNT / SAVE PROGRESS
+            </button>
+          )}
+          <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/8 pt-3">
+            <span className="inline-flex items-center gap-1.5 font-mono-tech text-[8px] uppercase tracking-wider text-zinc-500">{isGuest ? <><span className="h-1.5 w-1.5 rounded-full bg-amber-300" /> Guest session</> : <><ShieldCheck className="h-3 w-3 text-emerald-300" /> Cloud account</>}</span>
             <button type="button" onClick={save} className="flex items-center gap-1.5 rounded-lg bg-[#DC1A22] px-3 py-2 font-mono-tech text-[9px] font-bold uppercase tracking-wider text-white transition-colors hover:bg-[#b9151c]">
-              <Check className="h-3.5 w-3.5" /> Save
+              <Check className="h-3.5 w-3.5" /> Save Name
             </button>
           </div>
         </div>
+      )}
+      {linkOpen && isGuest && (
+        <AuthGateway
+          open
+          mode="link"
+          guestSaveData={guestSaveData}
+          onClose={() => setLinkOpen(false)}
+          onAuthenticated={async (account) => {
+            await onAuthenticated(account);
+            setLinkOpen(false);
+            setOpen(false);
+          }}
+        />
       )}
     </div>
   );
