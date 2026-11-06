@@ -9,6 +9,9 @@ const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "ut
 const remoteCarsSource = await readFile(new URL("../src/three/MultiplayerRacePlayers.tsx", import.meta.url), "utf8");
 const raceModeSource = await readFile(new URL("../src/components/RaceMode.tsx", import.meta.url), "utf8");
 const publicRoomDirectorySource = await readFile(new URL("../src/lib/publicRoomDirectory.ts", import.meta.url), "utf8");
+const circuitTrackArtworkSource = await readFile(new URL("../src/components/CircuitTrackArtwork.tsx", import.meta.url), "utf8");
+const supabaseConfigSource = await readFile(new URL("../src/lib/supabase.ts", import.meta.url), "utf8");
+const viteEnvSource = await readFile(new URL("../src/vite-env.d.ts", import.meta.url), "utf8");
 const publicRoomMigration = await readFile(new URL("../supabase/migrations/20261106011422_public_room_directory.sql", import.meta.url), "utf8");
 const vehicleThumbnailSource = await readFile(new URL("../src/lib/vehicleThumbnails.ts", import.meta.url), "utf8");
 const countdownSource = await readFile(new URL("../src/components/OnlineRaceCountdown.tsx", import.meta.url), "utf8");
@@ -165,6 +168,9 @@ assert.equal(realtimeGuestCountdown?.type, "raceCountdown", "Remote drivers shou
 realtimeHost.disconnectRaceRoom();
 realtimeGuest.disconnectRaceRoom();
 
+assert.match(supabaseConfigSource, /VITE_SUPABASE_URL[\s\S]*VITE_SUPABASE_PUBLISHABLE_KEY[\s\S]*VITE_SUPABASE_ANON_KEY[\s\S]*createClient\(supabaseUrl, supabasePublicKey/, "Supabase should initialize from the configured URL and accept either publishable or legacy anon client keys");
+assert.match(supabaseConfigSource, /new URL\(supabaseUrl\)[\s\S]*valid HTTP\(S\) Supabase project URL/, "Invalid Supabase environment values should fail gracefully rather than crash app startup");
+assert.match(viteEnvSource, /VITE_SUPABASE_PUBLISHABLE_KEY\?: string[\s\S]*VITE_SUPABASE_ANON_KEY\?: string/, "Vite types should recognize the preferred and legacy Supabase public keys");
 assert.match(publicRoomDirectorySource, /\.from\("rooms"\)[\s\S]*\.select\("room_code,host_id,host_name,map,weather,player_count,max_players,expires_at,is_public"\)[\s\S]*\.eq\("is_public", true\)[\s\S]*\.gt\("expires_at"/, "Lobby discovery should query active public rows from the shared Supabase table");
 assert.match(publicRoomDirectorySource, /rpc\("create_public_room"[\s\S]*p_room_code[\s\S]*p_host_name[\s\S]*p_map[\s\S]*p_weather[\s\S]*p_host_token/, "Room creation should publish its code, host, track and weather to the backend");
 assert.match(publicRoomDirectorySource, /rpc\("join_room_by_code"[\s\S]*p_room_code[\s\S]*p_player_id/, "Joining should reserve the active room through a backend lookup rather than local storage");
@@ -267,6 +273,10 @@ assert.match(appSource, /<UserProfileBadge[\s\S]*profile=\{playerProfile\}[\s\S]
 assert.match(appSource, /<RaceMode[\s\S]*onCreateRoom=\{createOnlineRoom\}[\s\S]*onJoinRoom=\{joinOnlineRoom\}/, "Race setup should expose online create/join actions");
 assert.match(raceModeSource, /CONFIRM & CREATE ROOM[\s\S]*Match Settings[\s\S]*Edit Match Settings/, "Room creation and host-only lobby settings should use the requested steps");
 assert.match(raceModeSource, /kind === "create" \? "Configure your lobby"[\s\S]*01 · Circuit[\s\S]*02 · Time &amp; weather[\s\S]*CONFIRM & CREATE ROOM/, "The create flow should let drivers select a circuit and time/weather before confirming publication");
+assert.match(appSource, /CircuitTrackArtwork map=\{map\} selected=\{selected\}/, "Single-player circuit cards should render the shared track artwork component");
+assert.match(raceModeSource, /CircuitTrackArtwork map=\{map\} selected=\{selected\}/, "Lobby circuit cards should render the same shared track artwork component");
+assert.match(circuitTrackArtworkSource, /manila:[\s\S]*tokyo:[\s\S]*"new-york":[\s\S]*routeShape[\s\S]*stroke=\{selected \? "#F5C518" : "#FFFFFF"\}/, "Each circuit should have its matching SVG route, with the selected route highlighted");
+assert.match(raceModeSource, /aria-pressed=\{selected\}[\s\S]*selected \? "border-\[#F5C518\] bg-\[#F5C518\]\/\[0\.07\][\s\S]*Selected circuit[\s\S]*Choose circuit/, "The selected lobby circuit should update its card state and selected track badge");
 assert.match(raceModeSource, /CANCEL[\s\S]*CONFIRM & CREATE ROOM/, "Create confirmation actions should have clear uppercase hierarchy and spacing");
 assert.match(raceModeSource, /onClick=\{\(\) => setOnlineView\("browser"\)\}[^>]*>← Browse Lobbies[\s\S]*Exit Lobby/, "Browse Lobbies should switch views without exiting; only the explicit Exit Lobby action requests confirmation");
 assert.match(raceModeSource, /Leave room <span[\s\S]*\{roomCode\}[\s\S]*STAY IN LOBBY[\s\S]*LEAVE LOBBY/, "Leaving should require a room-code confirmation with stay and red leave actions");
